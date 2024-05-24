@@ -3,7 +3,6 @@ package com.example.chess.data.model
 import android.util.Log
 import com.example.chess.R
 import kotlin.math.abs
-import kotlin.math.log
 import kotlin.math.max
 import kotlin.math.min
 
@@ -38,11 +37,11 @@ class Pawn(
 
         // Regular move: one square forward
         if (colDiff == 0 && rowDiff == direction && isEmpty(end)) {
+            this.canEnPassant = false
             return true
         }
 
-
-
+        //two moves forward
         if (colDiff == 0 && rowDiff == 2 * direction && start.position.isOnStartingRow()) {
             val intermediateRow = start.position.row + direction
 
@@ -51,19 +50,23 @@ class Pawn(
 
             // Check if both intermediate and end spots are empty
             if (isEmpty(intermediateSpot) && isEmpty(endSpot)) {
+                this.canEnPassant = true
                 return true
             }
         }
 
-        //check for enPassant
-        if ((colDiff == 1 || colDiff == -1) && rowDiff == direction) {
-            return isEnPassant(board, start, end)
+        // Capture move: one square diagonally forward to capture opponent's piece
+        if (rowDiff == direction && abs(colDiff) == 1 && !isEmpty(end) && end.chessPiece!!.color != color) {
+            this.canEnPassant = false
+            return true
         }
 
+        if (isEnPassant(board, start, end)) {
+            this.canEnPassant = false
+            return true
+        }
 
-        // Capture move: one square diagonally forward to capture opponent's piece
-        return rowDiff == direction && abs(colDiff) == 1 && !isEmpty(end) && end.chessPiece!!.color != color
-
+        return false
     }
 
     // Extension functions
@@ -76,16 +79,32 @@ class Pawn(
         return row == startingRow
     }
 
-    fun promotePawn(pawn: Pawn, promotionPiece: ChessPiece, board: Board) {
+    private fun canPromotePawn(
+        position: Position,
+        promotionPiece: ChessPiece?,
+        board: Board
+    ): Boolean {
         // Get the position of the pawn
-        val position = pawn.position
+        Log.d(TAG, "promotePawn: $position")
 
         // Check if the pawn is at the last row of the board
-        val lastRow = if (pawn.color == Color.WHITE) 0 else Board.NUM_ROWS - 1
+        val lastRow = if (this.color == Color.WHITE) 0 else Board.NUM_ROWS - 1
+        Log.d(TAG, "promotePawn: $lastRow")
         if (position.row == lastRow) {
             // Promote the pawn by replacing it with the specified promotion piece
-            val spot = board.getBox(position.row, position.column)
+            board.getBox(position.row, position.column)
+            if (promotionPiece != null) {
+                return true
+            }
+        }
+        return false
+    }
+
+    fun promotePawn(position: Position, promotionPiece: ChessPiece?, board: Board) {
+        val spot = board.getBox(position.row, position.column)
+        if (canPromotePawn(position, promotionPiece, board)) {
             spot.chessPiece = promotionPiece
+            Log.d(TAG, "promotePawn: pawn promoted to $promotionPiece")
         }
     }
 
@@ -101,6 +120,10 @@ class Pawn(
 
             if (adjacentPawn != null && adjacentPawn.color != color) {
                 // Check if the adjacent pawn just moved two squares forward
+                Log.d(
+                    TAG,
+                    "adjacentPawn color is : ${adjacentPawn.color} position is: ${adjacentPawn.position}"
+                )
                 Log.d(TAG, "can EnPassant: ${adjacentPawn.canEnPassant}")
                 return adjacentPawn.canEnPassant
             }
@@ -115,14 +138,6 @@ class Pawn(
         // Move the pawn to the destination square
         end.chessPiece = start.chessPiece
         start.chessPiece = null
-    }
-
-    fun canEnPassant(start: Spot, end: Spot) {
-        val direction = if (this.color == Color.WHITE) -1 else 1
-
-        val startRow = if (direction == -1) 6 else 1 // Starting row for the pawn
-        val endRow = if (direction == -1) 4 else 3 // Row where en passant is possible
-        this.canEnPassant = start.position.row == startRow && end.position.row == endRow
     }
 }
 
@@ -151,17 +166,15 @@ class Rook(
 
     private fun isPathClear(board: Board, start: Position, end: Position): Boolean {
         // Check if the path from start to end is clear of obstacles (other pieces)
+        // Check if the path from start to end is clear of obstacles (other pieces)
         if (start.row == end.row) {
             // Moving horizontally (same row)
             val minColumn = min(start.column, end.column)
             val maxColumn = max(start.column, end.column)
             for (column in (minColumn + 1) until maxColumn) {
-                if (board.getBox(start.row, column).chessPiece != null && board.getBox(
-                        start.row,
-                        column
-                    ).chessPiece!!.color == color
-                ) {
-                    return false // Path is obstructed
+                val spot = board.getBox(start.row, column)
+                if (spot.chessPiece != null) {
+                    return false // Path is obstructed by a piece
                 }
             }
         } else if (start.column == end.column) {
@@ -169,12 +182,9 @@ class Rook(
             val minRow = min(start.row, end.row)
             val maxRow = max(start.row, end.row)
             for (row in (minRow + 1) until maxRow) {
-                if (board.getBox(row, start.column).chessPiece != null && board.getBox(
-                        row,
-                        start.column
-                    ).chessPiece!!.color == color
-                ) {
-                    return false // Path is obstructed
+                val spot = board.getBox(row, start.column)
+                if (spot.chessPiece != null) {
+                    return false // Path is obstructed by a piece
                 }
             }
         }

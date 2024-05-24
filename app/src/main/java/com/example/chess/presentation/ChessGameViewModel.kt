@@ -4,7 +4,7 @@ import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.chess.data.model.Board
-import com.example.chess.data.model.Color
+import com.example.chess.data.model.ChessPiece
 import com.example.chess.data.model.GameStatus
 import com.example.chess.data.model.Player
 import com.example.chess.data.model.Position
@@ -39,6 +39,10 @@ class ChessGameViewModel @Inject constructor(
     private val _selectedPiecePosition = MutableStateFlow<Spot?>(null)
     val selectedStartSpot: StateFlow<Spot?> = _selectedPiecePosition.asStateFlow()
 
+    //promotion Piece
+    private var _promotionPiece = MutableStateFlow<ChessPiece?>(null)
+    var promotionPiece: StateFlow<ChessPiece?> = _promotionPiece.asStateFlow()
+
     init {
         viewModelScope.launch {
             game.init(playerWhite, playerDark)
@@ -52,11 +56,21 @@ class ChessGameViewModel @Inject constructor(
         updateValidMoves(spot.position)
     }
 
+    fun setPromotedPiece(promotedPiece: ChessPiece) {
+        _promotionPiece.value = promotedPiece
+    }
+
+    fun startNewGame() {
+        game.init(playerWhite, playerDark)
+        _boardState.value.gameStatus = GameStatus.ACTIVE
+    }
+
     fun movePieceTo(targetPosition: Position) {
         Log.d(TAG, "movePieceTo: piece moved")
         val selectedSpot = _selectedPiecePosition.value ?: return
         val targetSpot = game.board.getBox(targetPosition.row, targetPosition.column)
         playerMove(selectedSpot, targetSpot)
+        //game.checkPawnPromotion(targetPosition, promotionPiece.value)
         _boardState.value = BoardState(game.board, game.currentTurn, game.status)
         _validMoves.value = emptyList()
     }
@@ -74,5 +88,5 @@ class ChessGameViewModel @Inject constructor(
 data class BoardState(
     val board: Board?,
     val currentPlayer: Player?,
-    val gameStatus: GameStatus = GameStatus.ACTIVE
+    var gameStatus: GameStatus = GameStatus.ACTIVE
 )
