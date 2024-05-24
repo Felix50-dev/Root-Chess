@@ -1,0 +1,36 @@
+R_DEF: Internal format may change without notice
+local
+color black
+color purple_200
+color purple_500
+color purple_700
+color teal_200
+color teal_700
+color white
+drawable baseline_fullscreen_exit_24
+drawable baseline_redo_24
+drawable baseline_restart_alt_24
+drawable baseline_undo_24
+drawable bishop_dark
+drawable bishop_white
+drawable chess_surface
+drawable chesstable
+drawable ic_launcher_background
+drawable ic_launcher_foreground
+drawable king_dark
+drawable king_white
+drawable knight_dark
+drawable knight_white
+drawable pawn_dark
+drawable pawn_white
+drawable queen_dark
+drawable queen_white
+drawable rook_dark
+drawable rook_white
+drawable surface
+mipmap ic_launcher
+mipmap ic_launcher_round
+string app_name
+style Theme.Chess
+xml backup_rules
+xml data_extraction_rules
