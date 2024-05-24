@@ -17,7 +17,7 @@ object AppModule {
     @Provides
     @Singleton
     fun provideGame(board: Board, @ApplicationContext context: Context): GamePlay {
-        return GamePlay(board, context)
+        return GamePlay(board)
     }
 
     @Provides

@@ -63,6 +63,7 @@ class ChessGameViewModel @Inject constructor(
     fun startNewGame() {
         game.init(playerWhite, playerDark)
         _boardState.value.gameStatus = GameStatus.ACTIVE
+        _boardState.value = BoardState(game.board, game.currentTurn, game.status)
     }
 
     fun movePieceTo(targetPosition: Position) {
@@ -70,7 +71,6 @@ class ChessGameViewModel @Inject constructor(
         val selectedSpot = _selectedPiecePosition.value ?: return
         val targetSpot = game.board.getBox(targetPosition.row, targetPosition.column)
         playerMove(selectedSpot, targetSpot)
-        //game.checkPawnPromotion(targetPosition, promotionPiece.value)
         _boardState.value = BoardState(game.board, game.currentTurn, game.status)
         _validMoves.value = emptyList()
     }
@@ -81,6 +81,24 @@ class ChessGameViewModel @Inject constructor(
 
     private fun playerMove(start: Spot, end: Spot): Boolean {
         return game.playerMove(game.currentTurn, start, end)
+    }
+
+    fun undoMove() {
+        if (game.movesPlayed.isNotEmpty()) {
+            Log.d(TAG, "undoMove: movesMadeAre: ${game.movesPlayed}")
+            game.undoMoveByPlayer(game.movesPlayed.last(), game.board)
+            val turn = if (game.currentTurn == playerDark) playerWhite else playerDark
+            game.currentTurn = turn
+            _boardState.value = BoardState(game.board, game.currentTurn, game.status)
+        }
+    }
+
+    fun redoMove() {
+        if (game.movesUndone.isNotEmpty()) {
+            Log.d(TAG, "redoMove: movesUndone are: ${game.movesUndone}: total number is: ${game.movesUndone.size}")
+            game.redoMove(game.movesUndone.last(), game.board)
+            _boardState.value = BoardState(game.board, game.currentTurn, game.status)
+        }
     }
 
 }
