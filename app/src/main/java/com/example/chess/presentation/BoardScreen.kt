@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -77,7 +78,10 @@ fun ChessGameScreen(chessGameViewModel: ChessGameViewModel) {
                 chessGameViewModel.movePieceTo(it)
             },
             onSetPromotionPiece = chessGameViewModel::setPromotedPiece,
-            promotionPiece = promotionPiece
+            promotionPiece = promotionPiece,
+            onUndoMove = { chessGameViewModel.undoMove() },
+            onRedoMove = { chessGameViewModel.redoMove() },
+            onStartNewGame = { chessGameViewModel.startNewGame() }
         )
         if (boardState.gameStatus == GameStatus.WHITE_WIN) {
             checkMateDialog = true
@@ -174,6 +178,9 @@ fun ChessGrid(
     onSelectSpot: (Spot) -> Unit,
     onMovePieceTo: (Position) -> Unit, // Add this parameter
     onSetPromotionPiece: (ChessPiece) -> Unit,
+    onUndoMove: () -> Unit,
+    onRedoMove: () -> Unit,
+    onStartNewGame: () -> Unit,
     promotionPiece: ChessPiece?
 ) {
 
@@ -195,6 +202,51 @@ fun ChessGrid(
             modifier = modifier.fillMaxSize(),
             contentScale = ContentScale.FillBounds
         )
+
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .align(Alignment.TopStart)
+                .padding(top = 32.dp),
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .align(Alignment.CenterHorizontally),
+                horizontalArrangement = Arrangement.Center
+            ) {
+                Spacer(modifier = Modifier.weight(1f))
+                Surface(
+                    shape = CircleShape,
+                    modifier = Modifier.size(50.dp),
+                    color = Color(0xFFA26232),
+                    tonalElevation = 8.dp
+                ) {
+                    Image(
+                        painter = painterResource(id = R.drawable.baseline_restart_alt_24),
+                        contentDescription = "restart button",
+                        modifier = Modifier
+                            .clickable {
+                                onStartNewGame()
+                            }
+                    )
+                }
+                Spacer(modifier = Modifier.weight(0.3f))
+                Surface(
+                    shape = CircleShape,
+                    modifier = Modifier.size(50.dp),
+                    color = Color(0xFFA26232),
+                    tonalElevation = 8.dp
+                ) {
+                    Image(
+                        painter = painterResource(id = R.drawable.baseline_fullscreen_exit_24),
+                        contentDescription = "exit button"
+                    )
+                }
+                Spacer(modifier = Modifier.weight(1f))
+            }
+        }
+
         Column(
             modifier = modifier.fillMaxSize(),
             verticalArrangement = Arrangement.Center,
@@ -280,6 +332,53 @@ fun ChessGrid(
                         )
                     }
                 }
+            }
+        }
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .align(Alignment.BottomStart)
+                .padding(bottom = 32.dp),
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .align(Alignment.CenterHorizontally),
+                horizontalArrangement = Arrangement.Center
+            ) {
+                Spacer(modifier = Modifier.weight(1f))
+                Surface(
+                    shape = CircleShape,
+                    modifier = Modifier.size(50.dp),
+                    color = Color(0xFFA26232),
+                    tonalElevation = 8.dp
+                ) {
+                    Image(
+                        painter = painterResource(id = R.drawable.baseline_undo_24),
+                        contentDescription = "undo button",
+                        modifier = Modifier
+                            .clickable {
+                                onUndoMove()
+                            }
+                    )
+                }
+                Spacer(modifier = Modifier.weight(0.3f))
+                Surface(
+                    shape = CircleShape,
+                    modifier = Modifier.size(50.dp),
+                    color = Color(0xFFA26232),
+                    tonalElevation = 8.dp
+                ) {
+                    Image(
+                        painter = painterResource(id = R.drawable.baseline_redo_24),
+                        contentDescription = "redo button",
+                        modifier = Modifier
+                            .clickable {
+                                onRedoMove()
+                            }
+                    )
+                }
+                Spacer(modifier = Modifier.weight(1f))
             }
         }
         if (isPawnPromotion) {
@@ -385,7 +484,7 @@ fun PawnPromotionDialog(
                     )
                 }
             }
-            }
+        }
     }
 }
 

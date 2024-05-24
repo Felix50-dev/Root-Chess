@@ -1,8 +1,6 @@
 package com.example.chess.data.repository
 
-import android.content.Context
 import android.util.Log
-import android.widget.Toast
 import com.example.chess.data.model.Board
 import com.example.chess.data.model.ChessPiece
 import com.example.chess.data.model.Color
@@ -18,13 +16,13 @@ import javax.inject.Inject
 private const val TAG = "GamePlay"
 
 class GamePlay @Inject constructor(
-    var board: Board,
-    private val context: Context
+    var board: Board
 ) {
     private lateinit var players: Array<Player>
     lateinit var currentTurn: Player
     var status: GameStatus = GameStatus.ACTIVE
-    private val movesPlayed: MutableList<Move> = mutableListOf()
+    val movesPlayed: MutableList<Move> = mutableListOf()
+    val movesUndone: MutableList<Move> = mutableListOf()
 
     fun init(p1: Player, p2: Player) {
         players = arrayOf(p1, p2)
@@ -39,10 +37,6 @@ class GamePlay @Inject constructor(
         movesPlayed.clear()
 
         status = GameStatus.ACTIVE
-    }
-
-    fun isEnd(): Boolean {
-        return status != GameStatus.ACTIVE
     }
 
     fun playerMove(player: Player, start: Spot, end: Spot): Boolean {
@@ -85,7 +79,7 @@ class GamePlay @Inject constructor(
 
     }
 
-    private fun makeMove(myBoard: Board, move: Move, player: Player): Boolean {
+    fun makeMove(myBoard: Board, move: Move, player: Player): Boolean {
         Log.d(TAG, "makeMove: function running")
         //no piece available to move
         val sourcePiece = move.pieceMoved ?: return false
@@ -147,9 +141,6 @@ class GamePlay @Inject constructor(
             move.pieceKilled = destPiece
         }
 
-        // Store the move
-        movesPlayed.add(move)
-
         // Move piece from the start box to end box
         move.to.chessPiece = move.from.chessPiece
         move.from.chessPiece = null
@@ -157,6 +148,9 @@ class GamePlay @Inject constructor(
 
         myBoard.getBox(move.from.position.row, move.from.position.column).chessPiece = null
         myBoard.getBox(move.to.position.row, move.to.position.column).chessPiece = sourcePiece
+
+        // Store the move
+        movesPlayed.add(move)
 
         //Check for check and checkmate
         checkForWinner(player)
@@ -167,20 +161,7 @@ class GamePlay @Inject constructor(
         return true
     }
 
-    fun checkPawnPromotion(position: Position, promotionPiece: ChessPiece?) {
-        // Check if the position is on the last rank for the current player's color
-        if ((position.row == 0 && currentTurn.isWhite) || (position.row == 7 && !currentTurn.isWhite)) {
-            // Check if there is a pawn at the position
-            val spot = board.getBox(position.row, position.column)
-            val pawn = spot.chessPiece as? Pawn
-            if (pawn != null) {
-                // Set the pawn promotion state
-                if (promotionPiece != null) spot.chessPiece = promotionPiece
-            }
-        }
-    }
-
-    private fun checkForWinner(player: Player) {
+    fun checkForWinner(player: Player) {
         Log.d(TAG, "checkForWinner: check for winner started")
         val opponent = if (player.isWhite) players[1] else players[0]
 
@@ -196,11 +177,9 @@ class GamePlay @Inject constructor(
                 // Set game status to opponent win
                 if (player.isWhite) {
                     Log.d(TAG, "makeMove: white wins")
-                    displayToast(player, "checkmate")
                     GameStatus.WHITE_WIN
                 } else {
                     Log.d(TAG, "makeMove: black wins")
-                    displayToast(player, "checkmate")
                     GameStatus.BLACK_WIN
                 }
             } else {
@@ -210,10 +189,7 @@ class GamePlay @Inject constructor(
             }
         } else if (isStalemate(opponent, board)) {
             status = GameStatus.STALEMATE
-            displayToast(player, "no Winner")
-        }
-
-        else {
+        } else {
             Log.d(TAG, "makeMove: no player in check")
             // Set game status to active
             status = GameStatus.ACTIVE
@@ -241,6 +217,7 @@ class GamePlay @Inject constructor(
             //perform enPassant
             sourcePiece.performEnPassant(board, move.from, move.to)
             move.isEnPassant = true
+            movesPlayed.add(move)
 
             return true
         }
@@ -250,6 +227,7 @@ class GamePlay @Inject constructor(
             // Perform castling move
             sourcePiece.castlingMove(move.from, move.to, board)
             move.isCastlingMove = true
+            movesPlayed.add(move)
 
             return true
         }
@@ -265,11 +243,12 @@ class GamePlay @Inject constructor(
         move.to.chessPiece = move.from.chessPiece
         move.from.chessPiece = null
 
+        movesPlayed.add(move)
         Log.d(TAG, "determineMove: piece moved from ${move.from} to ${move.to}")
         return true
     }
 
-    private fun changeCurrentTurn() {
+    fun changeCurrentTurn() {
         // Set the current turn to the other player
         currentTurn = if (currentTurn == players[0]) {
             players[1]
@@ -388,11 +367,6 @@ class GamePlay @Inject constructor(
         return true // No legal move removes check, it's checkmate
     }
 
-
-    private fun displayToast(player: Player, message: String) {
-        val playerColor = if (player.isWhite) "White" else "Black"
-        Toast.makeText(context, "$message! $playerColor wins", Toast.LENGTH_SHORT).show()
-    }
 
     private fun findKing(myBoard: Board, playerColor: Color): Spot? {
         // Iterate through the board to find the king spot of the specified color
@@ -515,18 +489,20 @@ class GamePlay @Inject constructor(
                 kingEndSpot.chessPiece = null
             }
             move.isCastlingMove = false
+            movesPlayed.remove(move)
         } else if (move.isEnPassant) {
             // Calculate the position of the captured pawn based on the end spot
             val capturedPawnPosition = Position(startSpot.position.row, endSpot.position.column)
 
             // Get the spot of the captured pawn
-            val capturedPawnSpot = board.getBox(capturedPawnPosition.row, capturedPawnPosition.column)
+            val capturedPawnSpot =
+                board.getBox(capturedPawnPosition.row, capturedPawnPosition.column)
 
             // Move the pawn back to its original position
             startSpot.chessPiece = endSpot.chessPiece
             endSpot.chessPiece = null
 
-            val opponentColor = if (move.player.isWhite ) Color.BLACK else Color.WHITE
+            val opponentColor = if (move.player.isWhite) Color.BLACK else Color.WHITE
 
             // Restore the captured pawn to its original position
             capturedPawnSpot.chessPiece = Pawn(
@@ -535,6 +511,7 @@ class GamePlay @Inject constructor(
                 isKilled = false,
                 canEnPassant = true
             )
+            movesPlayed.remove(move)
         } else {
             // Restore the piece that was moved to its original position
             startSpot.chessPiece = move.pieceMoved
@@ -542,7 +519,7 @@ class GamePlay @Inject constructor(
             endSpot.chessPiece = move.pieceKilled
 
             Log.d(TAG, "undoMove: piece Moved From $endSpot to $startSpot")
-
+            movesPlayed.remove(move)
         }
         currentTurn = player
     }
@@ -590,18 +567,20 @@ class GamePlay @Inject constructor(
                 kingEndSpot.chessPiece = null
             }
             move.isCastlingMove = false
+            movesPlayed.remove(move)
         } else if (move.isEnPassant) {
             // Calculate the position of the captured pawn based on the end spot
             val capturedPawnPosition = Position(startSpot.position.row, endSpot.position.column)
 
             // Get the spot of the captured pawn
-            val capturedPawnSpot = board.getBox(capturedPawnPosition.row, capturedPawnPosition.column)
+            val capturedPawnSpot =
+                board.getBox(capturedPawnPosition.row, capturedPawnPosition.column)
 
             // Move the pawn back to its original position
             startSpot.chessPiece = endSpot.chessPiece
             endSpot.chessPiece = null
 
-            val opponentColor = if (move.player.isWhite ) Color.BLACK else Color.WHITE
+            val opponentColor = if (move.player.isWhite) Color.BLACK else Color.WHITE
 
             // Restore the captured pawn to its original position
             capturedPawnSpot.chessPiece = Pawn(
@@ -610,6 +589,7 @@ class GamePlay @Inject constructor(
                 isKilled = false,
                 canEnPassant = true
             )
+            movesPlayed.remove(move)
         } else {
             // Restore the piece that was moved to its original position
             startSpot.chessPiece = move.pieceMoved
@@ -617,8 +597,92 @@ class GamePlay @Inject constructor(
             endSpot.chessPiece = move.pieceKilled
 
             Log.d(TAG, "undoMove: piece Moved From $endSpot to $startSpot")
-
+            movesPlayed.remove(move)
         }
+    }
 
+    fun undoMoveByPlayer(move: Move, myBoard: Board) {
+        val startSpot = move.from
+        val endSpot = move.to
+
+        // If it was a castling move, undo the castling
+        if (move.isCastlingMove) {
+            Log.d(TAG, "undoMove: castling undoing")
+            // If it was a king-side castling
+            if (endSpot.position.column - startSpot.position.column == 2) {
+                // Move the rook back to its original position
+                val rookStartColumn = endSpot.position.column + 1
+                val rookEndColumn = startSpot.position.column + 1
+                val rookStartSpot = myBoard.getBox(startSpot.position.row, rookStartColumn)
+                val rookEndSpot = myBoard.getBox(startSpot.position.row, rookEndColumn)
+                rookStartSpot.chessPiece = rookEndSpot.chessPiece
+                rookEndSpot.chessPiece = null
+
+                //move the king back to its original position
+                val kingStartColumn = startSpot.position.column
+                val kingEndColumn = endSpot.position.column
+                val kingStartSpot = myBoard.getBox(startSpot.position.row, kingStartColumn)
+                val kingEndSpot = myBoard.getBox(endSpot.position.row, kingEndColumn)
+                kingStartSpot.chessPiece = kingEndSpot.chessPiece
+                kingEndSpot.chessPiece = null
+            }
+            // If it was a queen-side castling
+            if (endSpot.position.column - startSpot.position.column == -2) {
+                // Move the rook back to its original position
+                val rookStartColumn = endSpot.position.column - 2
+                val rookEndColumn = endSpot.position.column + 1
+                val rookStartSpot = myBoard.getBox(startSpot.position.row, rookStartColumn)
+                val rookEndSpot = myBoard.getBox(startSpot.position.row, rookEndColumn)
+                rookStartSpot.chessPiece = rookEndSpot.chessPiece
+                rookEndSpot.chessPiece = null
+                //move the king back to its original position
+                val kingStartColumn = startSpot.position.column
+                val kingEndColumn = endSpot.position.column
+                val kingStartSpot = myBoard.getBox(startSpot.position.row, kingStartColumn)
+                val kingEndSpot = myBoard.getBox(endSpot.position.row, kingEndColumn)
+                kingStartSpot.chessPiece = kingEndSpot.chessPiece
+                kingEndSpot.chessPiece = null
+            }
+            move.isCastlingMove = false
+            movesUndone.add(move)
+            movesPlayed.remove(move)
+        } else if (move.isEnPassant) {
+            // Calculate the position of the captured pawn based on the end spot
+            val capturedPawnPosition = Position(startSpot.position.row, endSpot.position.column)
+
+            // Get the spot of the captured pawn
+            val capturedPawnSpot =
+                board.getBox(capturedPawnPosition.row, capturedPawnPosition.column)
+
+            // Move the pawn back to its original position
+            startSpot.chessPiece = endSpot.chessPiece
+            endSpot.chessPiece = null
+
+            val opponentColor = if (move.player.isWhite) Color.BLACK else Color.WHITE
+
+            // Restore the captured pawn to its original position
+            capturedPawnSpot.chessPiece = Pawn(
+                color = opponentColor,
+                position = capturedPawnPosition,
+                isKilled = false,
+                canEnPassant = true
+            )
+            movesUndone.add(move)
+            movesPlayed.remove(move)
+        } else {
+            // Restore the piece that was moved to its original position
+            startSpot.chessPiece = move.pieceMoved
+            // Restore any piece that was captured during the move
+            endSpot.chessPiece = move.pieceKilled
+
+            Log.d(TAG, "undoMove: piece Moved From $endSpot to $startSpot")
+            movesUndone.add(move)
+            movesPlayed.remove(move)
+        }
+    }
+
+    fun redoMove(move: Move, myBoard: Board) {
+        makeMove(myBoard, move, move.player)
+        movesUndone.remove(move)
     }
 }
