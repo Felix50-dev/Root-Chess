@@ -140,6 +140,17 @@ class Board @Inject constructor() {
         return clonedBoard
     }
 
+    fun isValidPosition(position: Position): Boolean {
+        var isPositionValid = false
+        for (row in 0 until NUM_ROWS) {
+            for (column in 0 until NUM_COLUMNS) {
+                if (boxes[row][column].position == position
+                ) isPositionValid = true
+            }
+        }
+        return isPositionValid
+    }
+
 
     companion object {
         const val NUM_ROWS: Int = 8

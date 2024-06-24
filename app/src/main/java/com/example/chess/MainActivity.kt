@@ -14,6 +14,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.navigation.compose.rememberNavController
+import com.example.chess.navigation.RootChessNavHost
 import com.example.chess.presentation.ChessGameScreen
 import com.example.chess.presentation.ChessGameViewModel
 import com.example.chess.ui.theme.ChessTheme
@@ -36,7 +38,10 @@ class MainActivity : ComponentActivity() {
                     color = MaterialTheme.colorScheme.background
                 ) {
                     val viewModel: ChessGameViewModel = hiltViewModel()
-                    ChessGameScreen(chessGameViewModel = viewModel)
+                    RootChessNavHost(
+                        navController = rememberNavController(),
+                        viewModel = viewModel
+                    )
                 }
             }
         }
