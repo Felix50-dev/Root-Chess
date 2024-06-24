@@ -1,5 +1,6 @@
 package com.example.chess.data.model
 
 data class Player(
-    var isWhite: Boolean
+    var isWhite: Boolean,
+    var playerType: PlayerType
 )
