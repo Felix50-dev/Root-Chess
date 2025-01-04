@@ -1,6 +1,7 @@
 package com.example.chess.di
 
 import android.content.Context
+import com.example.chess.data.StockfishEngine
 import com.example.chess.data.model.Board
 import com.example.chess.data.repository.GamePlay
 import dagger.Module
@@ -16,14 +17,20 @@ object AppModule {
 
     @Provides
     @Singleton
-    fun provideGame(board: Board, @ApplicationContext context: Context): GamePlay {
-        return GamePlay(board)
+    fun provideGame(board: Board, stockfishEngine: StockfishEngine, @ApplicationContext context: Context): GamePlay {
+        return GamePlay(board, stockfishEngine)
     }
 
     @Provides
     @Singleton
     fun createBoard(): Board {
         return Board()
+    }
+
+    @Provides
+    @Singleton
+    fun createStockfishEngine(): StockfishEngine {
+        return StockfishEngine()
     }
 
 }

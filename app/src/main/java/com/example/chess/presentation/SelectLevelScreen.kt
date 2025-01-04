@@ -4,8 +4,10 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -20,31 +22,39 @@ fun SelectLevelScreen(
     onLevel1: () -> Unit,
     onLevel2: () -> Unit,
 ) {
-    Column(
-        modifier = modifier.fillMaxSize(),
-        verticalArrangement = Arrangement.Center
+    Scaffold(
+        topBar = {
+            TopAppBar(text = "Select Level")
+        }
     ) {
         Column(
             modifier = modifier
-                .fillMaxWidth(),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
+                .fillMaxSize()
+                .padding(it),
+            verticalArrangement = Arrangement.Center
         ) {
-            Button(
-                onClick = {
-                    onLevel1()
-                },
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFA26232))
+            Column(
+                modifier = modifier
+                    .fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                Text(text = "Level 1")
-            }
-            Button(
-                onClick = {
-                    onLevel2()
-                },
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFA26232))
-            ) {
-                Text(text = "Level 2")
+                Button(
+                    onClick = {
+                        onLevel1()
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFA26232))
+                ) {
+                    Text(text = "Level 1")
+                }
+                Button(
+                    onClick = {
+                        onLevel2()
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFA26232))
+                ) {
+                    Text(text = "Level 2")
+                }
             }
         }
     }

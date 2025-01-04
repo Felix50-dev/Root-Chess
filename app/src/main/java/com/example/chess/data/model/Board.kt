@@ -108,6 +108,8 @@ class Board @Inject constructor() {
         for (i in 2..5) {
             for (j in 0..7) {
                 boxes[i][j] = Spot(Position(i, j), null)
+                val notation = boxes[i][j].position.toAlgebraicNotation()
+                Log.d(TAG, "resetBoard: notation is $notation")
             }
         }
     }
