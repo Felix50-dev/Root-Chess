@@ -117,6 +117,7 @@ drawable notification_tile_bg
 drawable notify_panel_notification_icon_bg
 drawable pawn_dark
 drawable pawn_white
+drawable person
 drawable queen_dark
 drawable queen_white
 drawable rook_dark
@@ -170,6 +171,7 @@ id dialog_button
 id edit_text_id
 id forever
 id fragment_container_view_tag
+id hide_graphics_layer_in_inspector_tag
 id hide_ime_id
 id hide_in_inspector_tag
 id icon
@@ -282,13 +284,14 @@ string indeterminate
 string m3c_bottom_sheet_pane_title
 string navigation_menu
 string not_selected
-string off
-string on
 string range_end
 string range_start
 string search_bar_search
 string selected
 string snackbar_dismiss
+string state_empty
+string state_off
+string state_on
 string status_bar_notification_info_overflow
 string suggestions_available
 string switch_role
@@ -306,6 +309,8 @@ string time_picker_minute_suffix
 string time_picker_minute_text_field
 string time_picker_period_toggle_description
 string time_picker_pm
+string tooltip_description
+string tooltip_label
 string tooltip_long_press_label
 string tooltip_pane_description
 style DialogWindowTheme

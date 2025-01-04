@@ -1,10 +1,10 @@
 {
     "logs": [
         {
-            "outputFile": "com.example.chess.app-mergeDebugResources-53:/values-v21/values-v21.xml",
+            "outputFile": "com.example.chess.app-mergeDebugResources-55:/values-v21/values-v21.xml",
             "map": [
                 {
-                    "source": "C:\\Users\\admin\\.gradle\\caches\\transforms-3\\a200b44be5daf0b9b0b60e4ce1f80071\\transformed\\core-1.12.0\\res\\values-v21\\values-v21.xml",
+                    "source": "C:\\Users\\admin\\.gradle\\caches\\8.9\\transforms\\b78cf0d1ea9090e273ff7c542345c04f\\transformed\\core-1.13.1\\res\\values-v21\\values-v21.xml",
                     "from": {
                         "startLines": "2,3,4,5,6,7,8,9,10,13",
                         "startColumns": "4,4,4,4,4,4,4,4,4,4",

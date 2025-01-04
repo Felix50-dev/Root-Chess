@@ -13,7 +13,7 @@ public enum GameStatus {
     GameStatus() {
     }
     
-    @org.jetbrains.annotations.NotNull
+    @org.jetbrains.annotations.NotNull()
     public static kotlin.enums.EnumEntries<com.example.chess.data.model.GameStatus> getEntries() {
         return null;
     }

@@ -23,6 +23,7 @@ drawable knight_dark
 drawable knight_white
 drawable pawn_dark
 drawable pawn_white
+drawable person
 drawable queen_dark
 drawable queen_white
 drawable rook_dark

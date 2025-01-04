@@ -2,10 +2,13 @@ package com.example.chess.presentation
 
 import android.util.Log
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.VectorConverter
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.slideInHorizontally
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -56,8 +59,11 @@ import com.example.chess.R
 import com.example.chess.data.model.Bishop
 import com.example.chess.data.model.ChessPiece
 import com.example.chess.data.model.GameStatus
+import com.example.chess.data.model.King
 import com.example.chess.data.model.Knight
 import com.example.chess.data.model.Pawn
+import com.example.chess.data.model.Player
+import com.example.chess.data.model.PlayerType
 import com.example.chess.data.model.Position
 import com.example.chess.data.model.Queen
 import com.example.chess.data.model.Rook
@@ -66,18 +72,20 @@ import com.example.chess.data.model.toOffset
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
-
 private const val TAG = "BoardScreen"
 
 @Composable
 fun ChessGameScreen(
     chessGameViewModel: ChessGameViewModel,
     onExitGame: () -> Unit
-) {
+) { 
     val boardState by chessGameViewModel.boardState.collectAsState()
     val selectedStartSpot by chessGameViewModel.selectedStartSpot.collectAsState()
     val validMoves by chessGameViewModel.validMoves.collectAsState()
     val promotionPiece by chessGameViewModel.promotionPiece.collectAsState()
+    val promotionPieceAI by chessGameViewModel.promotionPieceAI.collectAsState()
+    val isInCheck by chessGameViewModel.isInCheck.collectAsState()
+    val checkPosition by chessGameViewModel.checkPosition.collectAsState()
 
     var checkMateDialog by remember {
         mutableStateOf(false)
@@ -94,7 +102,10 @@ fun ChessGameScreen(
         showExitDialog = true
     }
 
-    if (showExitDialog) {
+    AnimatedVisibility(
+        visible = showExitDialog,
+        enter = slideInHorizontally() + fadeIn()
+    ) {
         ExitDialog(
             onConfirm = {
                 chessGameViewModel.quitGame()
@@ -107,33 +118,39 @@ fun ChessGameScreen(
     }
 
     boardState.board?.let { board ->
-        ChessGrid(
-            boardState = board.boxes,
-            selectedStartSpot = selectedStartSpot,
-            validMoves = validMoves,
-            onSelectSpot = chessGameViewModel::onSelectSpot,
-            onMovePieceTo = {
-                chessGameViewModel.movePieceTo(it)
-            },
-            onSetPromotionPiece = chessGameViewModel::setPromotedPiece,
-            promotionPiece = promotionPiece,
-            onUndoMove = { chessGameViewModel.undoMove() },
-            onRedoMove = { chessGameViewModel.redoMove() },
-            onStartNewGame = { chessGameViewModel.startNewGame() },
-            onQuitGame = {
-                chessGameViewModel.quitGame()
-            },
-            onExitGame = {
-                onExitGame()
-            }
-        )
+        boardState.currentPlayer?.let {
+            ChessGrid(
+                boardState = board.boxes,
+                selectedStartSpot = selectedStartSpot,
+                isInCheck = isInCheck,
+                checkPosition = checkPosition,
+                player = it,
+                validMoves = validMoves,
+                onSelectSpot = chessGameViewModel::onSelectSpot,
+                onMovePieceTo = { position ->
+                    chessGameViewModel.movePieceTo(position)
+                },
+                onSetPromotionPiece = chessGameViewModel::setPromotedPiece,
+                promotionPiece = promotionPiece,
+                promotionPieceAI = promotionPieceAI,
+                onUndoMove = { chessGameViewModel.undoMove() },
+                onRedoMove = { chessGameViewModel.redoMove() },
+                onStartNewGame = { chessGameViewModel.startNewGame() },
+                onQuitGame = {
+                    chessGameViewModel.quitGame()
+                },
+                onExitGame = {
+                    onExitGame()
+                }
+            )
+        }
         if (boardState.gameStatus == GameStatus.WHITE_WIN) {
             checkMateDialog = true
         }
         if (boardState.gameStatus == GameStatus.BLACK_WIN) {
             checkMateDialog = true
         }
-        if (checkMateDialog) {
+        AnimatedVisibility(visible = checkMateDialog) {
             CheckmateDialog(
                 text = "CheckMate",
                 onNewGameSelected = {
@@ -145,117 +162,269 @@ fun ChessGameScreen(
             }
         }
         if (boardState.gameStatus == GameStatus.STALEMATE) {
-            staleMateDialog = true
-        }
-        if (staleMateDialog) {
-            CheckmateDialog(
-                text = "StaleMate",
-                onNewGameSelected = {
-                    chessGameViewModel.startNewGame()
+            if (boardState.gameStatus == GameStatus.STALEMATE) {
+                staleMateDialog = true
+            }
+            AnimatedVisibility(visible = staleMateDialog) {
+                CheckmateDialog(
+                    text = "StaleMate",
+                    onNewGameSelected = {
+                        chessGameViewModel.startNewGame()
+                        staleMateDialog = false
+                    }) {
                     staleMateDialog = false
-                }) {
-                staleMateDialog = false
-                boardState.gameStatus = GameStatus.ACTIVE
+                    boardState.gameStatus = GameStatus.ACTIVE
+                }
             }
         }
     }
-}
 
-@Composable
-fun AnimatedChessPiece(
-    chessPiece: ChessPiece,
-    squareSize: Dp,
-    currentPosition: Position
-) {
 
-    Box(
-        modifier = Modifier
-            .size(squareSize)
+    @Composable
+    fun StartGameDialog(
+        onConfirm: () -> Unit,
+        onDismiss: () -> Unit
     ) {
-        Image(
-            painter = painterResource(chessPiece.vectorAsset),
-            contentDescription = null,
-            modifier = Modifier.matchParentSize()
-
+        AlertDialog(
+            onDismissRequest = onDismiss,
+            title = {
+                Text(text = "Start New game")
+            },
+            text = {
+                Text(text = "Are you sure you want to Start a New Game")
+            },
+            confirmButton = {
+                TextButton(onClick = onConfirm) {
+                    Text(text = "Yes")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = onDismiss
+                ) {
+                    Text(text = "No")
+                }
+            }
         )
     }
 }
 
 
+    @OptIn(ExperimentalMaterial3Api::class)
+    @Composable
+    fun PawnPromotionDialog(
+        onPromotionSelected: (ChessPiece) -> Unit,
+        color: com.example.chess.data.model.Color,
+        onDismiss: () -> Unit,
+    ) {
+        var selectedOption by remember { mutableStateOf<ChessPiece?>(null) }
 
-@Composable
-fun ChessSquare(
-    isWhite: Boolean,
-    spot: Spot,
-    isSelected: Boolean,
-    validMoves: List<Position>,
-    onSelectSpot: (Spot) -> Unit,
-    onMovePieceTo: (Position) -> Unit,
-    squareSize: Dp
-) {
-    val currentPosition = spot.position
-
-    val initialOffset = currentPosition.toOffset()
-
-    val offset = remember { Animatable(initialOffset, Offset.VectorConverter) }
-
-    // Update the target positions when the piece moves
-    LaunchedEffect(currentPosition) {
-        val targetOffset = currentPosition.toOffset()
-        Log.d(TAG, "AnimatedChessPiece: target is $targetOffset ")
-        launch {
-            offset.animateTo(targetOffset, animationSpec = tween(durationMillis = 6000, delayMillis = 6000, easing = LinearEasing))
-        }
-    }
-
-    Box(
-        modifier = Modifier
-            .size(squareSize)
-            .offset { IntOffset(offset.value.x.roundToInt(), offset.value.y.roundToInt()) }
-            .background(color = if (isWhite) Color.White else Color(0xFFA26232))
-            .clickable {
-                if (validMoves.contains(spot.position)) {
-                    onMovePieceTo(spot.position)
-                } else {
-                    onSelectSpot(spot)
-                }
-            }
-    )
-    {
-        Box(
-            modifier = Modifier
-                .matchParentSize()
-                .border(3.dp, color = if (isSelected) Color(0xFF43A047) else Color.Transparent)
+        AlertDialog(
+            onDismissRequest = onDismiss,
         ) {
-            spot.chessPiece?.let { chessPiece ->
-                AnimatedChessPiece(
-                    chessPiece = chessPiece,
-                    squareSize = squareSize,
-                    currentPosition = spot.position
-                )
-            }
-            // Display dots on valid spots
-            validMoves.forEach { validMove ->
-                if (validMove == spot.position) {
-                    Box(
-                        modifier = Modifier
-                            .size(8.dp)
-                            .background(Color.Green)
-                            .align(Alignment.Center)
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                tonalElevation = 4.dp,
+                color = MaterialTheme.colorScheme.background,
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(24.dp)
+                ) {
+                    Text(
+                        text = "Pawn Promotion",
+                        color = MaterialTheme.colorScheme.onSurface,
+                        style = MaterialTheme.typography.titleMedium,
+                        textAlign = TextAlign.Center
                     )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.Center
+                    ) {
+                        PromotionOption(
+                            piece = Queen(
+                                color,
+                                Position(0, 0),
+                                false,
+                                vectorAsset = if (color == com.example.chess.data.model.Color.WHITE) R.drawable.queen_white else R.drawable.queen_dark
+                            ),
+                            onSelected = {
+                                selectedOption = it
+                                onPromotionSelected(selectedOption!!)
+                            },
+                            selected = selectedOption is Queen,
+                            text = "Queen"
+                        )
+                        PromotionOption(
+                            piece = Rook(
+                                color,
+                                Position(0, 0),
+                                false,
+                                vectorAsset = if (color == com.example.chess.data.model.Color.WHITE) R.drawable.rook_white else R.drawable.rook_dark
+                            ),
+                            onSelected = {
+                                selectedOption = it
+                                onPromotionSelected(selectedOption!!)
+                            },
+                            selected = selectedOption is Rook,
+                            text = "Rook"
+                        )
+                        PromotionOption(
+                            piece = Bishop(
+                                color,
+                                Position(0, 0),
+                                false,
+                                if (color == com.example.chess.data.model.Color.WHITE) R.drawable.bishop_white else R.drawable.bishop_dark
+                            ),
+                            onSelected = {
+                                selectedOption = it
+                                onPromotionSelected(selectedOption!!)
+                            },
+                            selected = selectedOption is Bishop,
+                            text = "Bishop"
+                        )
+                        PromotionOption(
+                            piece = Knight(
+                                color,
+                                Position(0, 0),
+                                false,
+                                if (color == com.example.chess.data.model.Color.WHITE) R.drawable.knight_white else R.drawable.knight_dark
+                            ),
+                            onSelected = {
+                                selectedOption = it
+                                onPromotionSelected(selectedOption!!)
+                            },
+                            selected = selectedOption is Knight,
+                            text = "Knight"
+                        )
+                    }
                 }
             }
         }
     }
 
-}
+    @Composable
+    fun PromotionOption(
+        piece: ChessPiece,
+        onSelected: (ChessPiece) -> Unit,
+        selected: Boolean,
+        text: String
+    ) {
+        Column(
+            verticalArrangement = Arrangement.Center,
+            horizontalAlignment = Alignment.CenterHorizontally,
+            modifier = Modifier.padding(vertical = 8.dp)
+        ) {
+            RadioButton(
+                selected = selected,
+                onClick = { onSelected(piece) },
+                modifier = Modifier.padding(end = 8.dp)
+            )
+            Image(
+                painter = painterResource(id = piece.vectorAsset),
+                contentDescription = "chess piece"
+            )
+            Text(
+                text = "$text ",
+                color = MaterialTheme.colorScheme.onSurface,
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Bold,
+                textAlign = TextAlign.Center
+            )
+        }
+    }
 
+    @OptIn(ExperimentalMaterial3Api::class)
+    @Composable
+    fun CheckmateDialog(
+        text: String,
+        onNewGameSelected: () -> Unit,
+        onViewBoardSelected: () -> Unit,
+    ) {
+        AlertDialog(
+            onDismissRequest = { /* Handle dialog dismissal */ },
+
+            ) {
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                tonalElevation = 4.dp,
+                color = MaterialTheme.colorScheme.background,
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(24.dp)
+                ) {
+                    Text(
+                        text = "$text ",
+                        color = MaterialTheme.colorScheme.onSurface,
+                        style = MaterialTheme.typography.headlineMedium,
+                        textAlign = TextAlign.Center
+                    )
+                    Text(
+                        text = "What would you like to do?",
+                        color = MaterialTheme.colorScheme.onSurface,
+                        style = MaterialTheme.typography.titleMedium,
+                        textAlign = TextAlign.Center
+                    )
+                    Row {
+                        Button(
+                            onClick = { onNewGameSelected() },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFA26232))
+                        ) {
+                            Text(text = "New Game")
+                        }
+                        Spacer(modifier = Modifier.weight(1f))
+                        Button(
+                            onClick = { onViewBoardSelected() },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFA26232))
+                        ) {
+                            Text(text = "Show Board")
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    @Composable
+    fun StartGameDialog(
+        onConfirm: () -> Unit,
+        onDismiss: () -> Unit
+    ) {
+        AlertDialog(
+            onDismissRequest = onDismiss,
+            title = {
+                Text(text = "Start New game")
+            },
+            text = {
+                Text(text = "Are you sure you want to Start a New Game")
+            },
+            confirmButton = {
+                TextButton(onClick = onConfirm) {
+                    Text(text = "Yes")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = onDismiss
+                ) {
+                    Text(text = "No")
+                }
+            }
+        )
+    }
 
 @Composable
 fun ChessGrid(
     modifier: Modifier = Modifier,
     boardState: Array<Array<Spot>>,
     selectedStartSpot: Spot?,
+    isInCheck: Boolean,
+    player: Player,
     validMoves: List<Position>,
     onSelectSpot: (Spot) -> Unit,
     onMovePieceTo: (Position) -> Unit, // Add this parameter
@@ -265,7 +434,9 @@ fun ChessGrid(
     onStartNewGame: () -> Unit,
     onQuitGame: () -> Unit,
     onExitGame: () -> Unit,
-    promotionPiece: ChessPiece?
+    promotionPiece: ChessPiece?,
+    promotionPieceAI: ChessPiece?,
+    checkPosition: Position
 ) {
 
     var isPawnPromotion by remember {
@@ -286,7 +457,7 @@ fun ChessGrid(
     if (showStartGameDialog) {
         StartGameDialog(
             onConfirm = {
-                onStartNewGame ()
+                onStartNewGame()
             }) {
             showStartGameDialog = false
         }
@@ -398,6 +569,7 @@ fun ChessGrid(
                                     isWhite = (row + column) % 2 == 0,
                                     spot = spot,
                                     isSelected = isSelected,
+                                    player = player,
                                     validMoves = validMoves,
                                     onSelectSpot = { selectedSpot ->
                                         onSelectSpot(selectedSpot)
@@ -405,23 +577,35 @@ fun ChessGrid(
                                     onMovePieceTo = { position ->
                                         onMovePieceTo(position)
                                     },
-                                    squareSize = squareSize
+                                    squareSize = squareSize,
+                                    isInCheck = isInCheck,
+                                    checkPosition = checkPosition
                                 )
 
                                 if (spot.position.row == 0 && spot.chessPiece?.color == com.example.chess.data.model.Color.WHITE && spot.chessPiece is Pawn) {
-                                    color = (spot.chessPiece as Pawn).color
-                                    isPawnPromotion = true
-                                    if (promotionPiece != null) {
-                                        spot.chessPiece = promotionPiece
-                                        isPawnPromotion = false
+                                    if (player.playerType == PlayerType.AI) {
+                                        if (promotionPieceAI != null) spot.chessPiece =
+                                            promotionPiece
+                                    } else {
+                                        color = (spot.chessPiece as Pawn).color
+                                        isPawnPromotion = true
+                                        if (promotionPiece != null) {
+                                            spot.chessPiece = promotionPiece
+                                            isPawnPromotion = false
+                                        }
                                     }
                                 }
                                 if (spot.position.row == 7 && spot.chessPiece?.color == com.example.chess.data.model.Color.BLACK && spot.chessPiece is Pawn) {
-                                    color = (spot.chessPiece as Pawn).color
-                                    isPawnPromotion = true
-                                    if (promotionPiece != null) {
-                                        spot.chessPiece = promotionPiece
-                                        isPawnPromotion = false
+                                    if (player.playerType == PlayerType.AI) {
+                                        if (promotionPieceAI != null) spot.chessPiece =
+                                            promotionPiece
+                                    } else {
+                                        color = (spot.chessPiece as Pawn).color
+                                        isPawnPromotion = true
+                                        if (promotionPiece != null) {
+                                            spot.chessPiece = promotionPiece
+                                            isPawnPromotion = false
+                                        }
                                     }
                                 }
                             }
@@ -509,94 +693,78 @@ fun ChessGrid(
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun PawnPromotionDialog(
-    onPromotionSelected: (ChessPiece) -> Unit,
-    color: com.example.chess.data.model.Color,
-    onDismiss: () -> Unit,
+fun ChessSquare(
+    isWhite: Boolean,
+    spot: Spot,
+    isSelected: Boolean,
+    player: Player,
+    isInCheck: Boolean,
+    checkPosition: Position,
+    validMoves: List<Position>,
+    onSelectSpot: (Spot) -> Unit,
+    onMovePieceTo: (Position) -> Unit,
+    squareSize: Dp
 ) {
-    var selectedOption by remember { mutableStateOf<ChessPiece?>(null) }
+    val currentPosition = spot.position
 
-    AlertDialog(
-        onDismissRequest = onDismiss,
-    ) {
-        Surface(
-            modifier = Modifier.fillMaxWidth(),
-            tonalElevation = 4.dp,
-            color = MaterialTheme.colorScheme.background,
-            shape = RoundedCornerShape(12.dp)
-        ) {
-            Column(
-                modifier = Modifier.padding(16.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(24.dp)
-            ) {
-                Text(
-                    text = "Pawn Promotion",
-                    color = MaterialTheme.colorScheme.onSurface,
-                    style = MaterialTheme.typography.titleMedium,
-                    textAlign = TextAlign.Center
+    val initialOffset = currentPosition.toOffset()
+
+    val offset = remember { Animatable(initialOffset, Offset.VectorConverter) }
+    if (player.isWhite) com.example.chess.data.model.Color.WHITE else com.example.chess.data.model.Color.BLACK
+
+    // Update the target positions when the piece moves
+    LaunchedEffect(currentPosition) {
+        val targetOffset = currentPosition.toOffset()
+        Log.d(TAG, "AnimatedChessPiece: target is $targetOffset ")
+        launch {
+            offset.animateTo(
+                targetOffset,
+                animationSpec = tween(
+                    durationMillis = 6000,
+                    delayMillis = 6000,
+                    easing = LinearEasing
                 )
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.Center
-                ) {
-                    PromotionOption(
-                        piece = Queen(
-                            color,
-                            Position(0, 0),
-                            false,
-                            vectorAsset = if (color == com.example.chess.data.model.Color.WHITE) R.drawable.queen_white else R.drawable.queen_dark
-                        ),
-                        onSelected = {
-                            selectedOption = it
-                            onPromotionSelected(selectedOption!!)
-                        },
-                        selected = selectedOption is Queen,
-                        text = "Queen"
-                    )
-                    PromotionOption(
-                        piece = Rook(
-                            color,
-                            Position(0, 0),
-                            false,
-                            vectorAsset = if (color == com.example.chess.data.model.Color.WHITE) R.drawable.rook_white else R.drawable.rook_dark
-                        ),
-                        onSelected = {
-                            selectedOption = it
-                            onPromotionSelected(selectedOption!!)
-                        },
-                        selected = selectedOption is Rook,
-                        text = "Rook"
-                    )
-                    PromotionOption(
-                        piece = Bishop(
-                            color,
-                            Position(0, 0),
-                            false,
-                            if (color == com.example.chess.data.model.Color.WHITE) R.drawable.bishop_white else R.drawable.bishop_dark
-                        ),
-                        onSelected = {
-                            selectedOption = it
-                            onPromotionSelected(selectedOption!!)
-                        },
-                        selected = selectedOption is Bishop,
-                        text = "Bishop"
-                    )
-                    PromotionOption(
-                        piece = Knight(
-                            color,
-                            Position(0, 0),
-                            false,
-                            if (color == com.example.chess.data.model.Color.WHITE) R.drawable.knight_white else R.drawable.knight_dark
-                        ),
-                        onSelected = {
-                            selectedOption = it
-                            onPromotionSelected(selectedOption!!)
-                        },
-                        selected = selectedOption is Knight,
-                        text = "Knight"
+            )
+        }
+    }
+
+    Box(
+        modifier = Modifier
+            .size(squareSize)
+            .offset { IntOffset(offset.value.x.roundToInt(), offset.value.y.roundToInt()) }
+            .background(color = if (isWhite) Color.White else Color(0xFFA26232))
+            .clickable {
+                if (validMoves.contains(spot.position)) {
+                    onMovePieceTo(spot.position)
+                } else {
+                    onSelectSpot(spot)
+                }
+            }
+    )
+    {
+        Box(
+            modifier = Modifier
+                .matchParentSize()
+                .border(
+                    3.dp,
+                    color = if (isSelected) Color(0xFF43A047) else if (spot.chessPiece is King && isInCheck && spot.position == checkPosition) Color.Red else Color.Transparent
+                )
+        ) {
+            spot.chessPiece?.let { chessPiece ->
+                AnimatedChessPiece(
+                    chessPiece = chessPiece,
+                    squareSize = squareSize
+                )
+            }
+            // Display dots on valid spots
+            validMoves.forEach { validMove ->
+                if (validMove == spot.position) {
+                    Box(
+                        modifier = Modifier
+                            .size(8.dp)
+                            .background(Color.Green)
+                            .align(Alignment.Center)
                     )
                 }
             }
@@ -605,92 +773,7 @@ fun PawnPromotionDialog(
 }
 
 @Composable
-fun PromotionOption(
-    piece: ChessPiece,
-    onSelected: (ChessPiece) -> Unit,
-    selected: Boolean,
-    text: String
-) {
-    Column(
-        verticalArrangement = Arrangement.Center,
-        horizontalAlignment = Alignment.CenterHorizontally,
-        modifier = Modifier.padding(vertical = 8.dp)
-    ) {
-        RadioButton(
-            selected = selected,
-            onClick = { onSelected(piece) },
-            modifier = Modifier.padding(end = 8.dp)
-        )
-        Image(painter = painterResource(id = piece.vectorAsset), contentDescription = "chess piece")
-        Text(
-            text = "$text ",
-            color = MaterialTheme.colorScheme.onSurface,
-            style = MaterialTheme.typography.bodyMedium,
-            fontWeight = FontWeight.Bold,
-            textAlign = TextAlign.Center
-        )
-    }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun CheckmateDialog(
-    text: String,
-    onNewGameSelected: () -> Unit,
-    onViewBoardSelected: () -> Unit,
-) {
-    AlertDialog(
-        onDismissRequest = { /* Handle dialog dismissal */ },
-
-        ) {
-        Surface(
-            modifier = Modifier.fillMaxWidth(),
-            tonalElevation = 4.dp,
-            color = MaterialTheme.colorScheme.background,
-            shape = RoundedCornerShape(12.dp)
-        ) {
-            Column(
-                modifier = Modifier.padding(16.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(24.dp)
-            ) {
-                Text(
-                    text = "$text ",
-                    color = MaterialTheme.colorScheme.onSurface,
-                    style = MaterialTheme.typography.headlineMedium,
-                    textAlign = TextAlign.Center
-                )
-                Text(
-                    text = "What would you like to do?",
-                    color = MaterialTheme.colorScheme.onSurface,
-                    style = MaterialTheme.typography.titleMedium,
-                    textAlign = TextAlign.Center
-                )
-                Row {
-                    Button(
-                        onClick = { onNewGameSelected() },
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFA26232))
-                    ) {
-                        Text(text = "New Game")
-                    }
-                    Spacer(modifier = Modifier.weight(1f))
-                    Button(
-                        onClick = { onViewBoardSelected() },
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFA26232))
-                    ) {
-                        Text(text = "Show Board")
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-fun ExitDialog(
-    onConfirm: () -> Unit,
-    onDismiss: () -> Unit
-) {
+fun ExitDialog(onConfirm: () -> Unit, onDismiss: () -> Unit) {
     AlertDialog(
         onDismissRequest = onDismiss,
         title = {
@@ -715,29 +798,20 @@ fun ExitDialog(
 }
 
 @Composable
-fun StartGameDialog(
-    onConfirm: () -> Unit,
-    onDismiss: () -> Unit
+fun AnimatedChessPiece(
+    chessPiece: ChessPiece,
+    squareSize: Dp
 ) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = {
-            Text(text = "Start New game")
-        },
-        text = {
-            Text(text = "Are you sure you want to Start a New Game")
-        },
-        confirmButton = {
-            TextButton(onClick = onConfirm) {
-                Text(text = "Yes")
-            }
-        },
-        dismissButton = {
-            TextButton(
-                onClick = onDismiss
-            ) {
-                Text(text = "No")
-            }
-        }
-    )
+
+    Box(
+        modifier = Modifier
+            .size(squareSize)
+    ) {
+        Image(
+            painter = painterResource(chessPiece.vectorAsset),
+            contentDescription = null,
+            modifier = Modifier.matchParentSize()
+
+        )
+    }
 }

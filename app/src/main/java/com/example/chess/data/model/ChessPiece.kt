@@ -3,7 +3,6 @@ package com.example.chess.data.model
 import android.util.Log
 import com.example.chess.R
 import kotlin.math.abs
-import kotlin.math.log
 import kotlin.math.max
 import kotlin.math.min
 
@@ -378,9 +377,7 @@ class King(
         // Check if the destination spot corresponds to a castling move
         if (rowDiff == 0 && columnDiff == 2) {
             // If it's a castling move, use the canCastle function to determine if the move is valid
-            val canCastle = canCastle(start, end, board)
-            Log.d(TAG, "canMove: can we castle: $canCastle")
-            return canCastle
+            return canCastle(start, end, board)
         }
 
         // Check if the destination spot is either empty or occupied by an opponent's piece
@@ -397,17 +394,12 @@ class King(
             val kingSideRookSpot = board.getBox(start.position.row, Board.NUM_COLUMNS - 1)
             val kingSideRook = kingSideRookSpot.chessPiece as? Rook ?: return false
             if (hasMoved || kingSideRook.hasMoved) {
-                Log.d(TAG, "canCastle: King or Rook hasMoved")
                 return false
             }
             // Ensure the squares between the king and rook are empty
             for (col in (start.position.column + 1) until (end.position.column + 1)) {
                 val intermediateSpot = board.getBox(start.position.row, col)
                 if (!isEmpty(intermediateSpot)) {
-                    Log.d(
-                        TAG,
-                        "canCastle: there is piece ${intermediateSpot.chessPiece} at position ${intermediateSpot.position}"
-                    )
                     return false
                 }
             }
@@ -415,10 +407,8 @@ class King(
             val color = if (color == Color.WHITE) Color.BLACK else Color.WHITE
             // Ensure the king is not in check and squares the king moves through are not under attack
             return if (!(isCheck(board, color) || isUnderAttack(board, start.position, color))) {
-                Log.d(TAG, "canCastle: we can safely castle")
                 true
             } else {
-                Log.d(TAG, "canCastle: the king or nearby square is in check")
                 false
             }
         }
@@ -428,19 +418,12 @@ class King(
             val queenSideRookSpot = board.getBox(start.position.row, 0)
             val queenSideRook = queenSideRookSpot.chessPiece as? Rook
             if (queenSideRook?.hasMoved == true || hasMoved) {
-                Log.d(TAG, "canCastle: King or Rook hasMoved Queen side")
                 return false
             }
             // Ensure the squares between the king and rook are empty
             for (col in (end.position.column - 1 ) until  (start.position.column)) {
-                Log.d(TAG, "canCastle: column is $col")
-                Log.d(TAG, "canCastle: endPosition is ${end.position.column}")
                 val intermediateSpot = board.getBox(start.position.row, col)
                 if (!isEmpty(intermediateSpot)) {
-                    Log.d(
-                        TAG,
-                        "canCastle: there is piece ${intermediateSpot.chessPiece} at position ${intermediateSpot.position}"
-                    )
                     return false
                 }
             }
@@ -452,7 +435,6 @@ class King(
     }
 
     fun castlingMove(start: Spot, end: Spot, board: Board) {
-        Log.d(TAG, "castlingMove: castling move running")
         val rowDiff = abs(end.position.row - start.position.row)
         val colDiff = (end.position.column - start.position.column)
 

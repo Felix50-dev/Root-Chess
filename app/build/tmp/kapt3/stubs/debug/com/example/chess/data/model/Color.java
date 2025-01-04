@@ -8,7 +8,7 @@ public enum Color {
     Color() {
     }
     
-    @org.jetbrains.annotations.NotNull
+    @org.jetbrains.annotations.NotNull()
     public static kotlin.enums.EnumEntries<com.example.chess.data.model.Color> getEntries() {
         return null;
     }
