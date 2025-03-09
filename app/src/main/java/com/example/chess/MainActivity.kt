@@ -2,7 +2,6 @@ package com.example.chess
 
 import android.graphics.Color
 import android.os.Bundle
-import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
@@ -20,7 +19,6 @@ import com.example.chess.navigation.RootChessNavHost
 import com.example.chess.presentation.ChessGameViewModel
 import com.example.chess.ui.theme.ChessTheme
 import dagger.hilt.android.AndroidEntryPoint
-import java.io.IOException
 
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
@@ -44,7 +42,8 @@ class MainActivity : ComponentActivity() {
                     val viewModel: ChessGameViewModel = hiltViewModel()
                     RootChessNavHost(
                         navController = rememberNavController(),
-                        viewModel = viewModel
+                        viewModel = viewModel,
+                        activity = this
                     )
                 }
             }

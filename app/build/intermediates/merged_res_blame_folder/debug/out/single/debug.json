@@ -1,146 +1,146 @@
 [
     {
-        "merged": "com.example.chess.app-merged_res-57:/drawable_baseline_restart_alt_24.xml.flat",
-        "source": "com.example.chess.app-main-59:/drawable/baseline_restart_alt_24.xml"
+        "merged": "com.example.chess.app-merged_res-59:/mipmap-anydpi-v26_ic_launcher.xml.flat",
+        "source": "com.example.chess.app-main-61:/mipmap-anydpi-v26/ic_launcher.xml"
     },
     {
-        "merged": "com.example.chess.app-merged_res-57:/mipmap-xxxhdpi_ic_launcher.webp.flat",
-        "source": "com.example.chess.app-main-59:/mipmap-xxxhdpi/ic_launcher.webp"
+        "merged": "com.example.chess.app-merged_res-59:/drawable_queen_dark.xml.flat",
+        "source": "com.example.chess.app-main-61:/drawable/queen_dark.xml"
     },
     {
-        "merged": "com.example.chess.app-merged_res-57:/mipmap-mdpi_ic_launcher_round.webp.flat",
-        "source": "com.example.chess.app-main-59:/mipmap-mdpi/ic_launcher_round.webp"
+        "merged": "com.example.chess.app-merged_res-59:/drawable_chesstable.jpg.flat",
+        "source": "com.example.chess.app-main-61:/drawable/chesstable.jpg"
     },
     {
-        "merged": "com.example.chess.app-merged_res-57:/mipmap-hdpi_ic_launcher_round.webp.flat",
-        "source": "com.example.chess.app-main-59:/mipmap-hdpi/ic_launcher_round.webp"
+        "merged": "com.example.chess.app-merged_res-59:/mipmap-xxxhdpi_ic_launcher.webp.flat",
+        "source": "com.example.chess.app-main-61:/mipmap-xxxhdpi/ic_launcher.webp"
     },
     {
-        "merged": "com.example.chess.app-merged_res-57:/drawable_pawn_white.xml.flat",
-        "source": "com.example.chess.app-main-59:/drawable/pawn_white.xml"
+        "merged": "com.example.chess.app-merged_res-59:/drawable_baseline_restart_alt_24.xml.flat",
+        "source": "com.example.chess.app-main-61:/drawable/baseline_restart_alt_24.xml"
     },
     {
-        "merged": "com.example.chess.app-merged_res-57:/drawable_knight_white.xml.flat",
-        "source": "com.example.chess.app-main-59:/drawable/knight_white.xml"
+        "merged": "com.example.chess.app-merged_res-59:/drawable_bishop_dark.xml.flat",
+        "source": "com.example.chess.app-main-61:/drawable/bishop_dark.xml"
     },
     {
-        "merged": "com.example.chess.app-merged_res-57:/drawable_queen_white.xml.flat",
-        "source": "com.example.chess.app-main-59:/drawable/queen_white.xml"
+        "merged": "com.example.chess.app-merged_res-59:/drawable_queen_white.xml.flat",
+        "source": "com.example.chess.app-main-61:/drawable/queen_white.xml"
     },
     {
-        "merged": "com.example.chess.app-merged_res-57:/mipmap-xxxhdpi_ic_launcher_round.webp.flat",
-        "source": "com.example.chess.app-main-59:/mipmap-xxxhdpi/ic_launcher_round.webp"
+        "merged": "com.example.chess.app-merged_res-59:/drawable_surface.jpg.flat",
+        "source": "com.example.chess.app-main-61:/drawable/surface.jpg"
     },
     {
-        "merged": "com.example.chess.app-merged_res-57:/mipmap-anydpi-v26_ic_launcher_round.xml.flat",
-        "source": "com.example.chess.app-main-59:/mipmap-anydpi-v26/ic_launcher_round.xml"
+        "merged": "com.example.chess.app-merged_res-59:/drawable_ic_launcher_foreground.xml.flat",
+        "source": "com.example.chess.app-main-61:/drawable/ic_launcher_foreground.xml"
     },
     {
-        "merged": "com.example.chess.app-merged_res-57:/drawable_king_dark.xml.flat",
-        "source": "com.example.chess.app-main-59:/drawable/king_dark.xml"
+        "merged": "com.example.chess.app-merged_res-59:/mipmap-mdpi_ic_launcher_round.webp.flat",
+        "source": "com.example.chess.app-main-61:/mipmap-mdpi/ic_launcher_round.webp"
     },
     {
-        "merged": "com.example.chess.app-merged_res-57:/drawable_ic_launcher_foreground.xml.flat",
-        "source": "com.example.chess.app-main-59:/drawable/ic_launcher_foreground.xml"
+        "merged": "com.example.chess.app-merged_res-59:/mipmap-xhdpi_ic_launcher_round.webp.flat",
+        "source": "com.example.chess.app-main-61:/mipmap-xhdpi/ic_launcher_round.webp"
     },
     {
-        "merged": "com.example.chess.app-merged_res-57:/drawable_ic_launcher_background.xml.flat",
-        "source": "com.example.chess.app-main-59:/drawable/ic_launcher_background.xml"
+        "merged": "com.example.chess.app-merged_res-59:/xml_backup_rules.xml.flat",
+        "source": "com.example.chess.app-main-61:/xml/backup_rules.xml"
     },
     {
-        "merged": "com.example.chess.app-merged_res-57:/drawable_rook_white.xml.flat",
-        "source": "com.example.chess.app-main-59:/drawable/rook_white.xml"
+        "merged": "com.example.chess.app-merged_res-59:/mipmap-hdpi_ic_launcher_round.webp.flat",
+        "source": "com.example.chess.app-main-61:/mipmap-hdpi/ic_launcher_round.webp"
     },
     {
-        "merged": "com.example.chess.app-merged_res-57:/xml_data_extraction_rules.xml.flat",
-        "source": "com.example.chess.app-main-59:/xml/data_extraction_rules.xml"
+        "merged": "com.example.chess.app-merged_res-59:/drawable_ic_launcher_background.xml.flat",
+        "source": "com.example.chess.app-main-61:/drawable/ic_launcher_background.xml"
     },
     {
-        "merged": "com.example.chess.app-merged_res-57:/drawable_bishop_dark.xml.flat",
-        "source": "com.example.chess.app-main-59:/drawable/bishop_dark.xml"
+        "merged": "com.example.chess.app-merged_res-59:/drawable_knight_white.xml.flat",
+        "source": "com.example.chess.app-main-61:/drawable/knight_white.xml"
     },
     {
-        "merged": "com.example.chess.app-merged_res-57:/drawable_baseline_undo_24.xml.flat",
-        "source": "com.example.chess.app-main-59:/drawable/baseline_undo_24.xml"
+        "merged": "com.example.chess.app-merged_res-59:/drawable_chess_surface.jpg.flat",
+        "source": "com.example.chess.app-main-61:/drawable/chess_surface.jpg"
     },
     {
-        "merged": "com.example.chess.app-merged_res-57:/drawable_baseline_fullscreen_exit_24.xml.flat",
-        "source": "com.example.chess.app-main-59:/drawable/baseline_fullscreen_exit_24.xml"
+        "merged": "com.example.chess.app-merged_res-59:/drawable_pawn_dark.xml.flat",
+        "source": "com.example.chess.app-main-61:/drawable/pawn_dark.xml"
     },
     {
-        "merged": "com.example.chess.app-merged_res-57:/mipmap-xxhdpi_ic_launcher_round.webp.flat",
-        "source": "com.example.chess.app-main-59:/mipmap-xxhdpi/ic_launcher_round.webp"
+        "merged": "com.example.chess.app-merged_res-59:/mipmap-xxhdpi_ic_launcher_round.webp.flat",
+        "source": "com.example.chess.app-main-61:/mipmap-xxhdpi/ic_launcher_round.webp"
     },
     {
-        "merged": "com.example.chess.app-merged_res-57:/drawable_queen_dark.xml.flat",
-        "source": "com.example.chess.app-main-59:/drawable/queen_dark.xml"
+        "merged": "com.example.chess.app-merged_res-59:/drawable_person.png.flat",
+        "source": "com.example.chess.app-main-61:/drawable/person.png"
     },
     {
-        "merged": "com.example.chess.app-merged_res-57:/mipmap-xhdpi_ic_launcher_round.webp.flat",
-        "source": "com.example.chess.app-main-59:/mipmap-xhdpi/ic_launcher_round.webp"
+        "merged": "com.example.chess.app-merged_res-59:/mipmap-mdpi_ic_launcher.webp.flat",
+        "source": "com.example.chess.app-main-61:/mipmap-mdpi/ic_launcher.webp"
     },
     {
-        "merged": "com.example.chess.app-merged_res-57:/drawable_pawn_dark.xml.flat",
-        "source": "com.example.chess.app-main-59:/drawable/pawn_dark.xml"
+        "merged": "com.example.chess.app-merged_res-59:/drawable_king_white.xml.flat",
+        "source": "com.example.chess.app-main-61:/drawable/king_white.xml"
     },
     {
-        "merged": "com.example.chess.app-merged_res-57:/drawable_baseline_redo_24.xml.flat",
-        "source": "com.example.chess.app-main-59:/drawable/baseline_redo_24.xml"
+        "merged": "com.example.chess.app-merged_res-59:/mipmap-xxxhdpi_ic_launcher_round.webp.flat",
+        "source": "com.example.chess.app-main-61:/mipmap-xxxhdpi/ic_launcher_round.webp"
     },
     {
-        "merged": "com.example.chess.app-merged_res-57:/drawable_knight_dark.xml.flat",
-        "source": "com.example.chess.app-main-59:/drawable/knight_dark.xml"
+        "merged": "com.example.chess.app-merged_res-59:/mipmap-hdpi_ic_launcher.webp.flat",
+        "source": "com.example.chess.app-main-61:/mipmap-hdpi/ic_launcher.webp"
     },
     {
-        "merged": "com.example.chess.app-merged_res-57:/mipmap-mdpi_ic_launcher.webp.flat",
-        "source": "com.example.chess.app-main-59:/mipmap-mdpi/ic_launcher.webp"
+        "merged": "com.example.chess.app-merged_res-59:/mipmap-xhdpi_ic_launcher.webp.flat",
+        "source": "com.example.chess.app-main-61:/mipmap-xhdpi/ic_launcher.webp"
     },
     {
-        "merged": "com.example.chess.app-merged_res-57:/drawable_rook_dark.xml.flat",
-        "source": "com.example.chess.app-main-59:/drawable/rook_dark.xml"
+        "merged": "com.example.chess.app-merged_res-59:/drawable_pawn_white.xml.flat",
+        "source": "com.example.chess.app-main-61:/drawable/pawn_white.xml"
     },
     {
-        "merged": "com.example.chess.app-merged_res-57:/drawable_chess_surface.jpg.flat",
-        "source": "com.example.chess.app-main-59:/drawable/chess_surface.jpg"
+        "merged": "com.example.chess.app-merged_res-59:/mipmap-xxhdpi_ic_launcher.webp.flat",
+        "source": "com.example.chess.app-main-61:/mipmap-xxhdpi/ic_launcher.webp"
     },
     {
-        "merged": "com.example.chess.app-merged_res-57:/drawable_surface.jpg.flat",
-        "source": "com.example.chess.app-main-59:/drawable/surface.jpg"
+        "merged": "com.example.chess.app-merged_res-59:/drawable_rook_white.xml.flat",
+        "source": "com.example.chess.app-main-61:/drawable/rook_white.xml"
     },
     {
-        "merged": "com.example.chess.app-merged_res-57:/xml_backup_rules.xml.flat",
-        "source": "com.example.chess.app-main-59:/xml/backup_rules.xml"
+        "merged": "com.example.chess.app-merged_res-59:/drawable_baseline_redo_24.xml.flat",
+        "source": "com.example.chess.app-main-61:/drawable/baseline_redo_24.xml"
     },
     {
-        "merged": "com.example.chess.app-merged_res-57:/drawable_king_white.xml.flat",
-        "source": "com.example.chess.app-main-59:/drawable/king_white.xml"
+        "merged": "com.example.chess.app-merged_res-59:/drawable_knight_dark.xml.flat",
+        "source": "com.example.chess.app-main-61:/drawable/knight_dark.xml"
     },
     {
-        "merged": "com.example.chess.app-merged_res-57:/mipmap-anydpi-v26_ic_launcher.xml.flat",
-        "source": "com.example.chess.app-main-59:/mipmap-anydpi-v26/ic_launcher.xml"
+        "merged": "com.example.chess.app-merged_res-59:/mipmap-anydpi-v26_ic_launcher_round.xml.flat",
+        "source": "com.example.chess.app-main-61:/mipmap-anydpi-v26/ic_launcher_round.xml"
     },
     {
-        "merged": "com.example.chess.app-merged_res-57:/mipmap-xhdpi_ic_launcher.webp.flat",
-        "source": "com.example.chess.app-main-59:/mipmap-xhdpi/ic_launcher.webp"
+        "merged": "com.example.chess.app-merged_res-59:/drawable_baseline_fullscreen_exit_24.xml.flat",
+        "source": "com.example.chess.app-main-61:/drawable/baseline_fullscreen_exit_24.xml"
     },
     {
-        "merged": "com.example.chess.app-merged_res-57:/mipmap-xxhdpi_ic_launcher.webp.flat",
-        "source": "com.example.chess.app-main-59:/mipmap-xxhdpi/ic_launcher.webp"
+        "merged": "com.example.chess.app-merged_res-59:/drawable_rook_dark.xml.flat",
+        "source": "com.example.chess.app-main-61:/drawable/rook_dark.xml"
     },
     {
-        "merged": "com.example.chess.app-merged_res-57:/mipmap-hdpi_ic_launcher.webp.flat",
-        "source": "com.example.chess.app-main-59:/mipmap-hdpi/ic_launcher.webp"
+        "merged": "com.example.chess.app-merged_res-59:/xml_data_extraction_rules.xml.flat",
+        "source": "com.example.chess.app-main-61:/xml/data_extraction_rules.xml"
     },
     {
-        "merged": "com.example.chess.app-merged_res-57:/drawable_chesstable.jpg.flat",
-        "source": "com.example.chess.app-main-59:/drawable/chesstable.jpg"
+        "merged": "com.example.chess.app-merged_res-59:/drawable_bishop_white.xml.flat",
+        "source": "com.example.chess.app-main-61:/drawable/bishop_white.xml"
     },
     {
-        "merged": "com.example.chess.app-merged_res-57:/drawable_person.png.flat",
-        "source": "com.example.chess.app-main-59:/drawable/person.png"
+        "merged": "com.example.chess.app-merged_res-59:/drawable_king_dark.xml.flat",
+        "source": "com.example.chess.app-main-61:/drawable/king_dark.xml"
     },
     {
-        "merged": "com.example.chess.app-merged_res-57:/drawable_bishop_white.xml.flat",
-        "source": "com.example.chess.app-main-59:/drawable/bishop_white.xml"
+        "merged": "com.example.chess.app-merged_res-59:/drawable_baseline_undo_24.xml.flat",
+        "source": "com.example.chess.app-main-61:/drawable/baseline_undo_24.xml"
     }
 ]

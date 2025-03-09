@@ -10,16 +10,21 @@ import com.example.chess.data.model.ChessPiece
 import com.example.chess.data.model.Color
 import com.example.chess.data.model.GameMode
 import com.example.chess.data.model.GameStatus
+import com.example.chess.data.model.Pawn
 import com.example.chess.data.model.Player
 import com.example.chess.data.model.PlayerType
 import com.example.chess.data.model.Position
+import com.example.chess.data.model.SANMovePair
 import com.example.chess.data.model.Spot
 import com.example.chess.data.repository.GamePlay
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
@@ -31,11 +36,22 @@ class ChessGameViewModel @Inject constructor(
     @ApplicationContext context: Context
 ) : ViewModel() {
 
+    private val _lastMove = MutableStateFlow<Move?>(null)
+    val lastMove: StateFlow<Move?> = _lastMove.asStateFlow()
+
+    private val _aiLastMove = MutableStateFlow<Move?>(null)
+    val aiLastMove: StateFlow<Move?> = _aiLastMove.asStateFlow()
+
+    // Add a StateFlow to control promotion dialog visibility
+    private val _showPawnPromotion = MutableStateFlow(false)
+    val showPawnPromotion: StateFlow<Boolean> = _showPawnPromotion.asStateFlow()
+
     private val playerWhite = Player(isWhite = true, playerType = PlayerType.HUMAN)
     private val playerDark = Player(isWhite = false, playerType = PlayerType.HUMAN)
 
     //boardState
-    private val _boardState: MutableStateFlow<BoardState> = MutableStateFlow(BoardState(null, null))
+    private val _boardState: MutableStateFlow<BoardState> =
+        MutableStateFlow(BoardState(null, null, lastMovedFrom = null))
     val boardState: StateFlow<BoardState> = _boardState.asStateFlow()
 
     //detectCheck
@@ -43,7 +59,7 @@ class ChessGameViewModel @Inject constructor(
     val isInCheck: StateFlow<Boolean> = _isInCheck.asStateFlow()
 
     //detectCheck position
-    private val _checkPosition = MutableStateFlow(Position(0,0))
+    private val _checkPosition = MutableStateFlow(Position(0, 0))
     val checkPosition = _checkPosition.asStateFlow()
 
     //color
@@ -69,8 +85,20 @@ class ChessGameViewModel @Inject constructor(
     private var _promotionPiece = MutableStateFlow<ChessPiece?>(null)
     var promotionPiece: StateFlow<ChessPiece?> = _promotionPiece.asStateFlow()
 
+    //pieces killed
+    private var _piecesKilled = MutableStateFlow<MutableList<ChessPiece>>(mutableListOf())
+    var piecesKilled: StateFlow<MutableList<ChessPiece>> = _piecesKilled.asStateFlow()
+
+    //moves made
+    private val _movesMade = MutableStateFlow<MutableList<String>>(mutableListOf())
+    val movesMade: StateFlow<MutableList<String>> = _movesMade.asStateFlow()
+
+    private val _movesMadeSAN = MutableStateFlow<MutableList<SANMovePair>>(mutableListOf())
+    val movesMadeSAN: StateFlow<MutableList<SANMovePair>> = _movesMadeSAN.asStateFlow()
+
 
     val promotionPieceAI: StateFlow<ChessPiece?> = game.promotionPieceFlow
+    private var aiJob: Job? = null
 
     init {
         viewModelScope.launch {
@@ -79,33 +107,14 @@ class ChessGameViewModel @Inject constructor(
         }
     }
 
-    init {
-        viewModelScope.launch {
-            game.init(playerWhite, playerDark)
-            game.currentTurn.collect {
-                if (it != null) {
-                    if (it.playerType  == PlayerType.AI) {
-                        //val opponent = if (it == playerWhite) playerDark else playerWhite
-                        Log.d(TAG, "collection successful: ")
-                        game.handleAIMove(it)
-                        _isInCheck.value = detectCheck() == true
-                        getKingPosition()
-                        _boardState.value = BoardState(game.board, game.currentTurn.value, game.status)
-                    }
-                }
-            }
-        }
-    }
-
-
 
     fun setGameMode(gameMode: GameMode) {
         viewModelScope.launch {
             _gameMode.value = gameMode
             if (gameMode == GameMode.FRIEND) {
-                playerWhite.playerType = PlayerType.HUMAN
-                playerDark.playerType = PlayerType.HUMAN
-                _boardState.value = BoardState(game.board, game.currentTurn.value, game.status)
+                game.init(playerWhite, playerDark)
+                _boardState.value =
+                    BoardState(game.board, game.currentTurn.value, game.status, null)
             } else {
                 Log.d(TAG, "setGameMode: running")
                 game.stockfish.sendCommand("ucinewgame")
@@ -119,18 +128,73 @@ class ChessGameViewModel @Inject constructor(
     }
 
     fun setColor(isWhite: Boolean) {
-        viewModelScope.launch {
-            _color.value = isWhite
-            if (_gameMode.value == GameMode.COMPUTER) {
-                if (isWhite) {
-                    playerWhite.playerType = PlayerType.HUMAN
-                    playerDark.playerType = PlayerType.AI
-                } else {
-                    playerWhite.playerType = PlayerType.AI
-                    playerDark.playerType = PlayerType.HUMAN
-                }
+        _color.value = isWhite
+
+        if (_gameMode.value == GameMode.COMPUTER) {
+            if (isWhite) {
+                playerWhite.playerType = PlayerType.HUMAN
+                playerDark.playerType = PlayerType.AI
+            } else {
+                playerWhite.playerType = PlayerType.AI
+                playerDark.playerType = PlayerType.HUMAN
             }
-            _boardState.value = BoardState(game.board, game.currentTurn.value, game.status)
+            game.init(playerWhite, playerDark)
+        }
+
+        _boardState.value = BoardState(game.board, game.currentTurn.value, game.status, null)
+
+        // Handle initial AI move if playing as black
+        if (_gameMode.value == GameMode.COMPUTER && !isWhite && game.currentTurn.value?.playerType == PlayerType.AI) {
+            viewModelScope.launch(Dispatchers.Default) {
+                game.currentTurn.value?.let { handleAIMoveAndUpdateState(it) }
+            }
+        }
+
+        // Cancel any existing AI job and start new collector
+        aiJob?.cancel()
+        aiJob = viewModelScope.launch(Dispatchers.Default) {
+            game.currentTurn
+                .drop(1)
+                .collect { currentPlayer ->
+                    if (currentPlayer?.playerType == PlayerType.AI) {
+                        handleAIMoveAndUpdateState(currentPlayer)
+                    }
+                }
+        }
+    }
+
+    // Extracted reusable function for AI move handling and state updates
+    private suspend fun handleAIMoveAndUpdateState(player: Player) {
+        try {
+            Log.d(TAG, "AI turn started: ${player.playerType}")
+            game.handleAIMove(player, _level.value)
+            val aiLastMove = game.aiLastMove
+            if (aiLastMove != null) {
+                _aiLastMove.value = Move(aiLastMove.from.position, aiLastMove.to.position)
+                Log.d(TAG, "handleAIMoveAndUpdateState: aiLastMove is $aiLastMove")
+            }
+
+            // Synchronize access to shared collections
+            _piecesKilled.value = synchronized(game.piecesKilled) {
+                game.piecesKilled.toMutableList()
+            }
+            _movesMade.value = synchronized(game.movesPlayed) {
+                game.convertMovesToNotation(game.movesPlayed.toMutableList())
+            }
+            _movesMadeSAN.value = game.convertMovesToSANNotation(game.movesPlayed)
+
+
+
+            _isInCheck.value = detectCheck() == true
+            getKingPosition()
+            _boardState.value = BoardState(
+                game.board.clone(),
+                game.currentTurn.value,
+                game.status,
+                game.aiStartPosition
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "Error in AI move: ${e.message}", e)
         }
     }
 
@@ -145,25 +209,40 @@ class ChessGameViewModel @Inject constructor(
 
     fun setPromotedPiece(promotedPiece: ChessPiece) {
         _promotionPiece.value = promotedPiece
+        _showPawnPromotion.value = false // Hide dialog after selection
+        val lastMoveValue = _lastMove.value ?: return
+        val targetSpot = game.board.getBox(lastMoveValue.to.row, lastMoveValue.to.column)
+        applyPromotion(targetSpot)
     }
 
     fun startNewGame() {
         viewModelScope.launch {
             game.init(playerWhite, playerDark)
             game.isGameOver = false
+            game.movesPlayed.clear()
+            _movesMade.value = emptyList<String>().toMutableList()
+            _movesMadeSAN.value = emptyList<SANMovePair>().toMutableList()
+            game.piecesKilled.clear()
+            _piecesKilled.value = emptyList<ChessPiece>().toMutableList()
             _selectedPiecePosition.value = null
             _boardState.value.gameStatus = GameStatus.ACTIVE
             _promotionPiece.value = null
-            _boardState.value = BoardState(game.board, game.currentTurn.value, game.status)
+            _boardState.value = BoardState(game.board, game.currentTurn.value, game.status, null)
+            Log.d(TAG, "startNewGame: ${game.board.boxes}")
         }
     }
 
     fun quitGame() {
         game.isGameOver = true
         game.movesPlayed.clear()
-        _boardState.value = BoardState(null, null)
+        _movesMade.value = emptyList<String>().toMutableList()
+        _movesMadeSAN.value = emptyList<SANMovePair>().toMutableList()
+        game.piecesKilled.clear()
+        _piecesKilled.value = emptyList<ChessPiece>().toMutableList()
+        _boardState.value = BoardState(null, null, game.status, null)
         _selectedPiecePosition.value = null
         _promotionPiece.value = null
+        game.init(playerWhite, playerDark)
     }
 
     private fun detectCheck(): Boolean? {
@@ -181,21 +260,53 @@ class ChessGameViewModel @Inject constructor(
         }
     }
 
+    private fun checkForPawnPromotion(targetSpot: Spot) {
+        val piece = targetSpot.chessPiece
+        if (piece is Pawn && ((piece.color == Color.WHITE && targetSpot.position.row == 0) || (piece.color == Color.BLACK && targetSpot.position.row == 7))
+        ) {
+            if (game.currentTurn.value?.playerType == PlayerType.HUMAN) {
+                _showPawnPromotion.value = true
+                _promotionPiece.value = null
+            }
+        }
+    }
+
+    private fun applyPromotion(targetSpot: Spot) {
+        _promotionPiece.value?.let { promotedPiece ->
+            targetSpot.chessPiece = promotedPiece
+            _boardState.value = _boardState.value.copy(board = game.board.clone())
+            Log.d(
+                TAG,
+                "Promotion applied: ${promotedPiece.javaClass.simpleName} at ${targetSpot.position}"
+            )
+        }
+    }
+
     fun movePieceTo(targetPosition: Position) {
-        Log.d(TAG, "movePieceTo: piece moved")
+        Log.d(TAG, "movePieceTo: piece selected for move")
         val selectedSpot = _selectedPiecePosition.value ?: return
         val targetSpot = game.board.getBox(targetPosition.row, targetPosition.column)
-        playerMove(selectedSpot, targetSpot)
-        Log.d(TAG, "movePieceTo: ui recomposed")
-        _isInCheck.value = detectCheck() == true
-        getKingPosition()
-        _boardState.value = BoardState(game.board, game.currentTurn.value, game.status)
+
+        // Update lastMove to trigger animation, but don't move the piece yet
+        _lastMove.value = Move(selectedSpot.position, targetPosition)
         _validMoves.value = emptyList()
+
+        // Delay the actual move and board update until animation completes
+        viewModelScope.launch {
+            //delay(400) // Match animation duration
+            playerMove(selectedSpot, targetSpot)
+            _isInCheck.value = detectCheck() == true
+            getKingPosition()
+            _boardState.value =
+                BoardState(game.board, game.currentTurn.value, game.status, selectedSpot.position)
+            checkForPawnPromotion(targetSpot)
+        }
     }
 
     private fun updateValidMoves(position: Position) {
         _validMoves.value = game.currentTurn.value?.let {
-            game.getRemainingValidMoves(position,
+            game.getRemainingValidMoves(
+                position,
                 it
             )
         }!!
@@ -209,32 +320,46 @@ class ChessGameViewModel @Inject constructor(
         return playerMove
     }
 
-    private suspend fun makeMove(player: Player, start: Spot, end: Spot): Boolean {
-        return if (player.playerType == PlayerType.HUMAN) {
-            // Handle the human player's move synchronously
-            val value = game.handleHumanMove(player, start, end)
-            _boardState.value = BoardState(game.board, game.currentTurn.value, game.status)
-            value
-        } else {
-            // Handle the AI move asynchronously using the result from handleAIMove
-            val value = game.handleAIMove(player)
-            _boardState.value = BoardState(game.board, game.currentTurn.value, game.status)
-            value
-        }
+    private fun makeMove(player: Player, start: Spot, end: Spot): Boolean {
+        // Handle the human player's move synchronously
+        val value = game.handleHumanMove(player, start, end)
+        checkForPawnPromotion(end)
+        _piecesKilled.value = game.piecesKilled.toMutableList()
+        _movesMade.value = game.convertMovesToNotation(game.movesPlayed)
+        Log.d(TAG, "makeMove: movesMade are: ${_movesMade.value}")
+        _movesMadeSAN.value = game.convertMovesToSANNotation(game.movesPlayed)
+        Log.d(TAG, "makeMove: SAN are: ${_movesMadeSAN.value}")
+        Log.d(TAG, "makeMove: ${_piecesKilled.value}")
+        _boardState.value = _boardState.value.copy(
+            board = game.board,
+            currentPlayer = game.currentTurn.value,
+            gameStatus = game.status,
+            lastMovedFrom = start.position
+        )
+        _lastMove.value = Move(start.position, end.position)
+        Log.d(TAG, "makeMove last move is: ${_lastMove.value}")
+        Log.d(TAG, "makeMove last move is: ${_boardState.value.lastMovedFrom}")
+        // Check for pawn promotion after move
+        checkForPawnPromotion(end)
+        return value
     }
 
     fun undoMove() {
         if (game.movesPlayed.isNotEmpty()) {
             Log.d(TAG, "undoMove: movesMadeAre: ${game.movesPlayed}")
             if (playerWhite.playerType == PlayerType.AI || playerDark.playerType == PlayerType.AI) {
-                game.undoMoveByPlayer(game.movesPlayed.last(), game.board)
-                game.undoMoveByPlayer(game.movesPlayed.last(), game.board)
+                game.undoMoveByPlayer(game.movesPlayed.last())
+                game.undoMoveByPlayer(game.movesPlayed.last())
             } else {
-                game.undoMoveByPlayer(game.movesPlayed.last(), game.board)
+                game.undoMoveByPlayer(game.movesPlayed.last())
                 val turn = if (game.currentTurn.value == playerDark) playerWhite else playerDark
                 game.currentTurn.value = turn
             }
-            _boardState.value.board = game.board
+            val updatedBoard = game.board.clone()
+            _piecesKilled.value = game.piecesKilled.toMutableList()
+            Log.d(TAG, "undoMove: ${_piecesKilled.value}")
+            _boardState.value =
+                _boardState.value.copy(board = updatedBoard, currentPlayer = game.currentTurn.value)
         }
     }
 
@@ -246,21 +371,32 @@ class ChessGameViewModel @Inject constructor(
             )
             if (playerWhite.playerType == PlayerType.AI || playerDark.playerType == PlayerType.AI) {
                 game.redoMove(game.movesUndone.last(), game.board)
-                game.currentTurn.value = if (game.currentTurn.value == playerDark) playerWhite else playerDark
+                game.currentTurn.value =
+                    if (game.currentTurn.value == playerDark) playerWhite else playerDark
                 game.redoMove(game.movesUndone.last(), game.board)
-                game.currentTurn.value = if (game.currentTurn.value == playerDark) playerWhite else playerDark
-                _boardState.value.board = game.board
+                game.currentTurn.value =
+                    if (game.currentTurn.value == playerDark) playerWhite else playerDark
             } else {
                 game.redoMove(game.movesUndone.last(), game.board)
-                _boardState.value.board = game.board
             }
+            _piecesKilled.value = game.piecesKilled
+            val updatedBoard = game.board.clone()
+            _boardState.value =
+                _boardState.value.copy(board = updatedBoard, currentPlayer = game.currentTurn.value)
         }
     }
 
 }
 
+data class Move(
+    val from: Position,
+    val to: Position,
+    val moveId: Long = System.currentTimeMillis() // Unique identifier for each move
+)
+
 data class BoardState(
     var board: Board?,
     val currentPlayer: Player?,
-    var gameStatus: GameStatus = GameStatus.ACTIVE
+    var gameStatus: GameStatus = GameStatus.ACTIVE,
+    var lastMovedFrom: Position? = Position(0, 0)
 )

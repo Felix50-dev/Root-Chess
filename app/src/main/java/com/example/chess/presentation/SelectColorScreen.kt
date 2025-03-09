@@ -66,6 +66,7 @@ fun SelectColorScreen(
 fun SelectColorScreenPreview() {
     HomeScreen(
         onPlayWithFriend = {},
-        onPlayWithComputer = {}
+        onPlayWithComputer = {},
+        onBackPressed = {}
     )
 }

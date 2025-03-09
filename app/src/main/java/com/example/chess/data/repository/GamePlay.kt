@@ -3,6 +3,7 @@ package com.example.chess.data.repository
 import android.util.Log
 import com.example.chess.R
 import com.example.chess.data.StockfishEngine
+import com.example.chess.data.model.AILevel
 import com.example.chess.data.model.Bishop
 import com.example.chess.data.model.Board
 import com.example.chess.data.model.ChessPiece
@@ -17,6 +18,7 @@ import com.example.chess.data.model.PlayerType
 import com.example.chess.data.model.Position
 import com.example.chess.data.model.Queen
 import com.example.chess.data.model.Rook
+import com.example.chess.data.model.SANMovePair
 import com.example.chess.data.model.Spot
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -31,32 +33,38 @@ class GamePlay @Inject constructor(
     var board: Board,
     val stockfish: StockfishEngine
 ) {
-    private lateinit var players: Array<Player>
+    private lateinit var players: List<Player>
     val currentTurn = MutableStateFlow<Player?>(null)
     var status: GameStatus = GameStatus.ACTIVE
     var isGameOver: Boolean = false
     val movesPlayed: MutableList<Move> = mutableListOf()
     val movesUndone: MutableList<Move> = mutableListOf()
+    val piecesKilled: MutableList<ChessPiece> = mutableListOf()
+    lateinit var aiStartPosition: Position
 
     // StateFlow for the promotion piece
     private val _promotionPieceFlow = MutableStateFlow<ChessPiece?>(null)
     val promotionPieceFlow: StateFlow<ChessPiece?> = _promotionPieceFlow.asStateFlow()
 
+    //AI last move
+    var aiLastMove: Move? = null
+
     fun init(p1: Player, p2: Player) {
         isGameOver = false
-        players = arrayOf(p1, p2)
-        board.resetBoard()
+        players = listOf(p1, p2)
+        board.boxes = board.resetBoard()
 
         currentTurn.value = if (p1.isWhite) {
+            Log.d(TAG, "init: current turn is $p2")
             p1
         } else {
+            Log.d(TAG, "init: current turn is $p2")
             p2
         }
 
         movesPlayed.clear()
 
         status = GameStatus.ACTIVE
-
     }
 
     fun handleHumanMove(player: Player, start: Spot, end: Spot): Boolean {
@@ -84,52 +92,137 @@ class GamePlay @Inject constructor(
         return false
     }
 
-    suspend fun handleAIMove(player: Player): Boolean = withContext(Dispatchers.IO) {
-        val moves = convertMovesToNotation().joinToString(" ")
-        Log.d(TAG, "handleAIMove: movesByStockFish are: $moves")
-        Log.d(TAG, "handleAIMove: movesPlayed are: $movesPlayed")
+    suspend fun handleAIMove(player: Player, level: AILevel): Boolean = withContext(Dispatchers.IO) {
+        try {
+            // Create a snapshot of movesPlayed to avoid concurrent modification
+            val movesSnapshot = synchronized(movesPlayed) { movesPlayed.toMutableList() }
+            val movesString = convertMovesToNotation(movesSnapshot).joinToString(" ")
+            Log.d(TAG, "handleAIMove: movesByStockFish are: $movesString")
+            Log.d(TAG, "handleAIMove: movesPlayed snapshot: ${movesSnapshot.joinToString()}") // Avoid direct toString() on mutable collection
 
-        // Send the position and start Stockfish thinking
-        stockfish.sendCommand("position startpos moves $moves")
-        stockfish.sendCommand("go depth 10")
+            // Send the position and start Stockfish thinking
+            stockfish.sendCommand("position startpos moves $movesString")
+            val skillLevel = if (level == AILevel.LEVEL1) 0 else 4
+            stockfish.setDifficultyLevel(skillLevel)
+            stockfish.sendCommand("go depth 1")
 
-        val bestMove = stockfish.getBestMove()
+            val bestMove = stockfish.getBestMove()
+            Log.d(TAG, "handleAIMove: moveByStockfish is $bestMove")
 
-        Log.d(TAG, "handleAIMove: moveByStockfish is $bestMove")
+            run {
+                // Handle Stockfish move and update game state
+                val move = handleStockfishBestMove(bestMove, player)
+                if (move != null) {
+                    aiLastMove = move
+                    Log.d(TAG, "handleAIMove: aiLastMove: $aiLastMove")
+                    // Synchronize board modifications
+                    val moveSuccessful = synchronized(board) {
+                        makeMove(board.clone(), move, player) // Use a cloned board to avoid mid-operation changes
+                    }
+                    if (moveSuccessful) {
+                        aiStartPosition = move.from.position
+                        Log.d(TAG, "handleAIMove: aiStartPosition set to $aiStartPosition")
+                        Log.d(TAG, "handleAIMove: move successful")
 
-        // Handle Stockfish move and update the game state on the main thread
-        val move = handleStockfishBestMove(bestMove, player)
-
-        // Ensure this block runs on the Main thread for UI updates
-        if (move != null) {
-            val moveSuccessful = makeMove(board, move, player)
-            if (moveSuccessful) {
-                Log.d(TAG, "handleAIMove: move successful")
-                checkForWinner(player)
-                if (!isGameOver) {
-                    changeCurrentTurn()  // Ensure the game state is updated
-                    return@withContext true
+                        // Check for winner and update turn safely
+                        synchronized(this@GamePlay) {
+                            checkForWinner(player)
+                            if (!isGameOver) {
+                                changeCurrentTurn()
+                                return@withContext true
+                            }
+                            return@withContext false
+                        }
+                    } else {
+                        Log.d(TAG, "handleAIMove: move failed")
+                        return@withContext false
+                    }
+                } else {
+                    Log.d(TAG, "handleAIMove: no valid move parsed from Stockfish")
+                    return@withContext false
                 }
-                return@withContext false
-            } else {
-                Log.d(TAG, "handleAIMove: move failed")
-                return@withContext false
             }
-        } else {
-            Log.d(TAG, "handleAIMove: no valid move found")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error in handleAIMove: ${e.message}", e)
             return@withContext false
         }
     }
-
-    private fun convertMovesToNotation(): MutableList<String> {
+    fun convertMovesToNotation(allMoves: MutableList<Move>): MutableList<String> {
         val moves = mutableListOf<String>()
-        movesPlayed.forEach {
+        allMoves.forEach {
             val startPosition = it.from.position.toAlgebraicNotation()
             val endPosition = it.to.position.toAlgebraicNotation()
             val move = startPosition + endPosition
             moves.add(move)
         }
         return moves
+    }
+
+    fun convertMovesToSANNotation(moves: List<Move>): MutableList<SANMovePair> {
+        val pairedMoves = mutableListOf<SANMovePair>()
+        var moveNumber = 1
+        var whitePieceDrawable: Int? = null
+        var whiteDestination: String? = null
+
+        moves.forEachIndexed { index, move ->
+            val from = move.from.position.toAlgebraicNotation() // e.g., "e2"
+            val to = move.to.position.toAlgebraicNotation()     // e.g., "e4"
+            val piece = move.pieceMoved!!
+
+            val (pieceDrawable, destination) = when {
+                piece.vectorAsset == R.drawable.king_white && from == "e1" -> {
+                    when (to) {
+                        "g1" -> null to "O-O"
+                        "c1" -> null to "O-O-O"
+                        else -> piece.vectorAsset to to
+                    }
+                }
+                piece.vectorAsset == R.drawable.king_dark && from == "e8" -> {
+                    when (to) {
+                        "g8" -> null to "O-O"
+                        "c8" -> null to "O-O-O"
+                        else -> piece.vectorAsset to to
+                    }
+                }
+                piece.vectorAsset in listOf(R.drawable.pawn_white, R.drawable.pawn_dark) -> {
+                    if (from[0] != to[0]) null to "${from[0]}x$to" // Capture or en passant
+                    else null to to // Simple pawn move
+                }
+                else -> piece.vectorAsset to to // Other pieces (knight, bishop, etc.)
+            }
+
+            if (index % 2 == 0) {
+                whitePieceDrawable = pieceDrawable
+                whiteDestination = destination
+            } else {
+                pairedMoves.add(
+                    SANMovePair(
+                        moveNumber = moveNumber,
+                        whitePieceDrawable = whitePieceDrawable,
+                        whiteDestination = whiteDestination ?: "",
+                        blackPieceDrawable = pieceDrawable,
+                        blackDestination = destination
+                    )
+                )
+                whitePieceDrawable = null
+                whiteDestination = null
+                moveNumber++
+            }
+        }
+
+        if (whitePieceDrawable != null) {
+            pairedMoves.add(
+                SANMovePair(
+                    moveNumber = moveNumber,
+                    whitePieceDrawable = whitePieceDrawable,
+                    whiteDestination = whiteDestination!!,
+                    blackPieceDrawable = null,
+                    blackDestination = ""
+                )
+            )
+        }
+
+        return pairedMoves
     }
 
     private fun handleStockfishBestMove(bestMove: String, player: Player): Move? {
@@ -145,6 +238,7 @@ class GamePlay @Inject constructor(
             val color = pieceMoved?.color
 
             if (bestMove.length == 5 && pieceMoved is Pawn) {
+                Log.d(TAG, "handleStockfishBestMove: this is pawn promotion")
                 _promotionPieceFlow.value = when (bestMove[4]) {
                     'q' -> Queen(
                         pieceMoved.color,
@@ -226,6 +320,10 @@ class GamePlay @Inject constructor(
             //perform enPassant
             sourcePiece.performEnPassant(board, move.from, move.to)
             sourcePiece.hasMoved = true
+            val destPiece = move.to.chessPiece
+            if (destPiece != null) {
+                piecesKilled.add(destPiece)
+            }
 
             movesPlayed.add(move)
             move.isEnPassant = false
@@ -247,6 +345,16 @@ class GamePlay @Inject constructor(
             return true
         }
 
+        //promotion for AI
+        if (promotionPieceFlow.value != null ) {
+            move.from.chessPiece = null
+            move.to.chessPiece = _promotionPieceFlow.value
+            sourcePiece.hasMoved = true
+            movesPlayed.add(move)
+            _promotionPieceFlow.value = null
+            return true
+        }
+
         //not a  Valid move
         if (!sourcePiece.canMove(myBoard, move.from, move.to)) {
             Log.d(TAG, "makeMove: invalid move")
@@ -259,12 +367,14 @@ class GamePlay @Inject constructor(
         if (destPiece != null) {
             destPiece.isKilled = true
             move.pieceKilled = destPiece
+            piecesKilled.add(destPiece)
         }
 
         // Move piece from the start box to end box
         move.to.chessPiece = move.from.chessPiece
         move.from.chessPiece = null
         sourcePiece.hasMoved = true
+
 
         // Store the move
         movesPlayed.add(move)
@@ -719,7 +829,7 @@ class GamePlay @Inject constructor(
         }
     }
 
-    fun undoMoveByPlayer(move: Move, myBoard: Board) {
+    fun undoMoveByPlayer(move: Move) {
         val startSpot = move.from
         val endSpot = move.to
 
@@ -731,16 +841,16 @@ class GamePlay @Inject constructor(
                 // Move the rook back to its original position
                 val rookStartColumn = endSpot.position.column + 1
                 val rookEndColumn = startSpot.position.column + 1
-                val rookStartSpot = myBoard.getBox(startSpot.position.row, rookStartColumn)
-                val rookEndSpot = myBoard.getBox(startSpot.position.row, rookEndColumn)
+                val rookStartSpot = board.getBox(startSpot.position.row, rookStartColumn)
+                val rookEndSpot = board.getBox(startSpot.position.row, rookEndColumn)
                 rookStartSpot.chessPiece = rookEndSpot.chessPiece
                 rookEndSpot.chessPiece = null
 
                 //move the king back to its original position
                 val kingStartColumn = startSpot.position.column
                 val kingEndColumn = endSpot.position.column
-                val kingStartSpot = myBoard.getBox(startSpot.position.row, kingStartColumn)
-                val kingEndSpot = myBoard.getBox(endSpot.position.row, kingEndColumn)
+                val kingStartSpot = board.getBox(startSpot.position.row, kingStartColumn)
+                val kingEndSpot = board.getBox(endSpot.position.row, kingEndColumn)
                 kingStartSpot.chessPiece = kingEndSpot.chessPiece
                 kingEndSpot.chessPiece = null
             }
@@ -749,15 +859,15 @@ class GamePlay @Inject constructor(
                 // Move the rook back to its original position
                 val rookStartColumn = endSpot.position.column - 2
                 val rookEndColumn = endSpot.position.column + 1
-                val rookStartSpot = myBoard.getBox(startSpot.position.row, rookStartColumn)
-                val rookEndSpot = myBoard.getBox(startSpot.position.row, rookEndColumn)
+                val rookStartSpot = board.getBox(startSpot.position.row, rookStartColumn)
+                val rookEndSpot = board.getBox(startSpot.position.row, rookEndColumn)
                 rookStartSpot.chessPiece = rookEndSpot.chessPiece
                 rookEndSpot.chessPiece = null
                 //move the king back to its original position
                 val kingStartColumn = startSpot.position.column
                 val kingEndColumn = endSpot.position.column
-                val kingStartSpot = myBoard.getBox(startSpot.position.row, kingStartColumn)
-                val kingEndSpot = myBoard.getBox(endSpot.position.row, kingEndColumn)
+                val kingStartSpot = board.getBox(startSpot.position.row, kingStartColumn)
+                val kingEndSpot = board.getBox(endSpot.position.row, kingEndColumn)
                 kingStartSpot.chessPiece = kingEndSpot.chessPiece
                 kingEndSpot.chessPiece = null
             }
@@ -785,6 +895,7 @@ class GamePlay @Inject constructor(
                 isKilled = false,
                 canEnPassant = true
             )
+            piecesKilled.remove(move.pieceKilled)
             movesUndone.add(move)
             movesPlayed.remove(move)
         } else {
@@ -792,6 +903,8 @@ class GamePlay @Inject constructor(
             startSpot.chessPiece = move.pieceMoved
             // Restore any piece that was captured during the move
             endSpot.chessPiece = move.pieceKilled
+
+            if (move.pieceKilled != null) piecesKilled.remove(move.pieceKilled)
 
             Log.d(TAG, "undoMove: piece Moved From $endSpot to $startSpot")
             movesUndone.add(move)
