@@ -65,6 +65,7 @@ fun SelectLevelScreen(
 fun SelectLevelScreenPreview() {
     HomeScreen(
         onPlayWithFriend = {},
-        onPlayWithComputer = {}
+        onPlayWithComputer = {},
+        onBackPressed = {}
     )
 }

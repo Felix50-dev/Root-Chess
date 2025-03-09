@@ -1,5 +1,6 @@
 package com.example.chess.navigation
 
+import androidx.activity.ComponentActivity
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.navigation.NavHostController
@@ -25,7 +26,8 @@ object RootChessDestinations {
 fun RootChessNavHost(
     navController: NavHostController,
     viewModel: ChessGameViewModel,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    activity: ComponentActivity,
 ) {
     NavHost(
         navController = navController,
@@ -39,11 +41,15 @@ fun RootChessNavHost(
                 onPlayWithFriend = {
                     viewModel.setGameMode(GameMode.FRIEND)
                     navController.navigate(RootChessDestinations.PLAY_WITH_FRIEND_ROUTE)
+                },
+                onPlayWithComputer = {
+                    viewModel.setGameMode(GameMode.COMPUTER)
+                    navController.navigate(RootChessDestinations.LEVEL_ROUTE)
+                },
+                onBackPressed = {
+                    activity.finish()
                 }
-            ) {
-                viewModel.setGameMode(GameMode.COMPUTER)
-                navController.navigate(RootChessDestinations.LEVEL_ROUTE)
-            }
+            )
         }
         composable(
             route = RootChessDestinations.PLAY_WITH_FRIEND_ROUTE

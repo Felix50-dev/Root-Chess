@@ -1,5 +1,6 @@
 package com.example.chess.presentation
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -23,8 +24,13 @@ import androidx.compose.ui.unit.dp
 fun HomeScreen(
     modifier: Modifier = Modifier,
     onPlayWithFriend: () -> Unit,
-    onPlayWithComputer: () -> Unit
+    onPlayWithComputer: () -> Unit,
+    onBackPressed: () -> Unit
 ) {
+
+    BackHandler {
+        onBackPressed()
+    }
     Scaffold(
         topBar = {
             TopAppBar(text = "Root Chess")
@@ -79,6 +85,7 @@ fun TopAppBar(text: String) {
 fun HomeScreenPreview() {
     HomeScreen(
         onPlayWithFriend = {},
-        onPlayWithComputer = {}
+        onPlayWithComputer = {},
+        onBackPressed = {}
     )
 }

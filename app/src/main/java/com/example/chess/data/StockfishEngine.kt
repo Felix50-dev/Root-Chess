@@ -74,6 +74,7 @@ class StockfishEngine {
     fun setDifficultyLevel(level: Int) {
         // Send UCI commands to set difficulty (like "setoption name Skill Level value X")
         sendCommand("setoption name Skill Level value $level")
+        Log.d(TAG, "setDifficultyLevel: $level")
     }
 
     fun stopStockfish() {
@@ -81,3 +82,5 @@ class StockfishEngine {
         process?.destroy()
     }
 }
+
+private const val TAG = "StockfishEngine"
