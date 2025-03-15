@@ -10,6 +10,7 @@ import com.example.chess.data.model.AILevel
 import com.example.chess.data.model.GameMode
 import com.example.chess.presentation.ChessGameScreen
 import com.example.chess.presentation.ChessGameViewModel
+import com.example.chess.presentation.ComputerModeScreen
 import com.example.chess.presentation.HomeScreen
 import com.example.chess.presentation.SelectColorScreen
 import com.example.chess.presentation.SelectLevelScreen
@@ -20,6 +21,7 @@ object RootChessDestinations {
     const val PLAY_WITH_COMPUTER_ROUTE = "computer"
     const val LEVEL_ROUTE = "level"
     const val COLOR_ROUTE = "color"
+    const val OTHER_ROUTE = "other"
 }
 
 @Composable
@@ -44,7 +46,7 @@ fun RootChessNavHost(
                 },
                 onPlayWithComputer = {
                     viewModel.setGameMode(GameMode.COMPUTER)
-                    navController.navigate(RootChessDestinations.LEVEL_ROUTE)
+                    navController.navigate(RootChessDestinations.OTHER_ROUTE)
                 },
                 onBackPressed = {
                     activity.finish()
@@ -58,6 +60,16 @@ fun RootChessNavHost(
                 chessGameViewModel = viewModel,
                 onExitGame = { navController.navigate(RootChessDestinations.HOME_ROUTE) }
             )
+        }
+
+        composable(
+            route = RootChessDestinations.OTHER_ROUTE
+        ) {
+            ComputerModeScreen { level, isWhite ->
+                if (level == 1) viewModel.setAILevel(AILevel.LEVEL1) else viewModel.setAILevel(AILevel.LEVEL2)
+                viewModel.setColor(isWhite)
+                navController.navigate(RootChessDestinations.PLAY_WITH_COMPUTER_ROUTE)
+            }
         }
 
         composable(

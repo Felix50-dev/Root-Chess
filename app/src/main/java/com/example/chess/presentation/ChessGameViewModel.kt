@@ -24,7 +24,6 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
@@ -79,7 +78,6 @@ class ChessGameViewModel @Inject constructor(
 
     //selectedStartSpot
     private val _selectedPiecePosition = MutableStateFlow<Spot?>(null)
-    val selectedStartSpot: StateFlow<Spot?> = _selectedPiecePosition.asStateFlow()
 
     //promotion Piece
     private var _promotionPiece = MutableStateFlow<ChessPiece?>(null)
@@ -97,7 +95,6 @@ class ChessGameViewModel @Inject constructor(
     val movesMadeSAN: StateFlow<MutableList<SANMovePair>> = _movesMadeSAN.asStateFlow()
 
 
-    val promotionPieceAI: StateFlow<ChessPiece?> = game.promotionPieceFlow
     private var aiJob: Job? = null
 
     init {
@@ -112,6 +109,8 @@ class ChessGameViewModel @Inject constructor(
         viewModelScope.launch {
             _gameMode.value = gameMode
             if (gameMode == GameMode.FRIEND) {
+                playerWhite.playerType = PlayerType.HUMAN
+                playerDark.playerType = PlayerType.HUMAN
                 game.init(playerWhite, playerDark)
                 _boardState.value =
                     BoardState(game.board, game.currentTurn.value, game.status, null)
@@ -141,20 +140,13 @@ class ChessGameViewModel @Inject constructor(
             game.init(playerWhite, playerDark)
         }
 
-        _boardState.value = BoardState(game.board, game.currentTurn.value, game.status, null)
-
-        // Handle initial AI move if playing as black
-        if (_gameMode.value == GameMode.COMPUTER && !isWhite && game.currentTurn.value?.playerType == PlayerType.AI) {
-            viewModelScope.launch(Dispatchers.Default) {
-                game.currentTurn.value?.let { handleAIMoveAndUpdateState(it) }
-            }
-        }
+        _boardState.value =
+            BoardState(game.board.clone(), game.currentTurn.value, game.status, null)
 
         // Cancel any existing AI job and start new collector
         aiJob?.cancel()
-        aiJob = viewModelScope.launch(Dispatchers.Default) {
+        aiJob = viewModelScope.launch(Dispatchers.Main) {
             game.currentTurn
-                .drop(1)
                 .collect { currentPlayer ->
                     if (currentPlayer?.playerType == PlayerType.AI) {
                         handleAIMoveAndUpdateState(currentPlayer)
@@ -228,6 +220,16 @@ class ChessGameViewModel @Inject constructor(
             _boardState.value.gameStatus = GameStatus.ACTIVE
             _promotionPiece.value = null
             _boardState.value = BoardState(game.board, game.currentTurn.value, game.status, null)
+            // Cancel any existing AI job and start new collector
+            aiJob?.cancel()
+            aiJob = viewModelScope.launch(Dispatchers.Main) {
+                game.currentTurn
+                    .collect { currentPlayer ->
+                        if (currentPlayer?.playerType == PlayerType.AI) {
+                            handleAIMoveAndUpdateState(currentPlayer)
+                        }
+                    }
+            }
             Log.d(TAG, "startNewGame: ${game.board.boxes}")
         }
     }
@@ -242,7 +244,7 @@ class ChessGameViewModel @Inject constructor(
         _boardState.value = BoardState(null, null, game.status, null)
         _selectedPiecePosition.value = null
         _promotionPiece.value = null
-        game.init(playerWhite, playerDark)
+        aiJob?.cancel()
     }
 
     private fun detectCheck(): Boolean? {
@@ -357,6 +359,7 @@ class ChessGameViewModel @Inject constructor(
             }
             val updatedBoard = game.board.clone()
             _piecesKilled.value = game.piecesKilled.toMutableList()
+            _movesMadeSAN.value = game.convertMovesToSANNotation(game.movesPlayed)
             Log.d(TAG, "undoMove: ${_piecesKilled.value}")
             _boardState.value =
                 _boardState.value.copy(board = updatedBoard, currentPlayer = game.currentTurn.value)

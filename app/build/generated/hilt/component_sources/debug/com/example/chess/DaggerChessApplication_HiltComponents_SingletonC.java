@@ -568,7 +568,7 @@ public final class DaggerChessApplication_HiltComponents_SingletonC {
     }
 
     @Override
-    public void injectChessApplication(ChessApplication chessApplication) {
+    public void injectChessApplication(ChessApplication arg0) {
     }
 
     @Override
