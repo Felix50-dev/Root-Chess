@@ -93,7 +93,7 @@ dependencies {
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
-    implementation ("androidx.navigation:navigation-compose:2.8.8")
+    implementation ("androidx.navigation:navigation-compose:2.8.9")
     implementation ("com.google.accompanist:accompanist-permissions:0.30.0")
 
     // Dagger - Hilt
@@ -101,6 +101,7 @@ dependencies {
     kapt("com.google.dagger:hilt-android-compiler:2.48")
     kapt("androidx.hilt:hilt-compiler:1.2.0")
     implementation("androidx.hilt:hilt-navigation-compose:1.2.0")
+    implementation ("com.airbnb.android:lottie-compose:6.4.0")
 
     implementation(fileTree("libs") {
         include("*.jar", "*.so")

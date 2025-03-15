@@ -44,7 +44,7 @@ class GamePlay @Inject constructor(
 
     // StateFlow for the promotion piece
     private val _promotionPieceFlow = MutableStateFlow<ChessPiece?>(null)
-    val promotionPieceFlow: StateFlow<ChessPiece?> = _promotionPieceFlow.asStateFlow()
+    private val promotionPieceFlow: StateFlow<ChessPiece?> = _promotionPieceFlow.asStateFlow()
 
     //AI last move
     var aiLastMove: Move? = null
@@ -63,7 +63,7 @@ class GamePlay @Inject constructor(
         }
 
         movesPlayed.clear()
-
+        movesUndone.clear()
         status = GameStatus.ACTIVE
     }
 
@@ -117,7 +117,7 @@ class GamePlay @Inject constructor(
                     Log.d(TAG, "handleAIMove: aiLastMove: $aiLastMove")
                     // Synchronize board modifications
                     val moveSuccessful = synchronized(board) {
-                        makeMove(board.clone(), move, player) // Use a cloned board to avoid mid-operation changes
+                        makeMove(board, move, player) // Use a cloned board to avoid mid-operation changes
                     }
                     if (moveSuccessful) {
                         aiStartPosition = move.from.position
@@ -340,7 +340,6 @@ class GamePlay @Inject constructor(
             sourcePiece.hasMoved = true
 
             movesPlayed.add(move)
-            move.isCastlingMove = false
 
             return true
         }
@@ -843,7 +842,8 @@ class GamePlay @Inject constructor(
                 val rookEndColumn = startSpot.position.column + 1
                 val rookStartSpot = board.getBox(startSpot.position.row, rookStartColumn)
                 val rookEndSpot = board.getBox(startSpot.position.row, rookEndColumn)
-                rookStartSpot.chessPiece = rookEndSpot.chessPiece
+                Log.d(TAG, "undoMoveByPlayer: rook startSpot/endSpot is $rookStartSpot $rookEndSpot")
+                board.getBox(startSpot.position.row, rookStartColumn).chessPiece = rookEndSpot.chessPiece
                 rookEndSpot.chessPiece = null
 
                 //move the king back to its original position

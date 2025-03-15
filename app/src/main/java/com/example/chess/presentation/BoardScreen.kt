@@ -15,19 +15,18 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.BasicAlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -46,7 +45,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
@@ -70,7 +68,6 @@ import com.example.chess.data.model.Queen
 import com.example.chess.data.model.Rook
 import com.example.chess.data.model.SANMovePair
 import com.example.chess.data.model.Spot
-import kotlin.math.abs
 
 private const val TAG = "BoardScreen"
 
@@ -85,12 +82,10 @@ fun ChessGameScreen(
     val isInCheck by chessGameViewModel.isInCheck.collectAsState()
     val checkPosition by chessGameViewModel.checkPosition.collectAsState()
     val piecesKilled by chessGameViewModel.piecesKilled.collectAsState()
-    val movesMade by chessGameViewModel.movesMade.collectAsState()
     val movesMadeSAN by chessGameViewModel.movesMadeSAN.collectAsState()
     val lastMove by chessGameViewModel.lastMove.collectAsState()
     val aiLastMove by chessGameViewModel.aiLastMove.collectAsState()
     val showPawnPromotion by chessGameViewModel.showPawnPromotion.collectAsState()
-    val promotionPiece by chessGameViewModel.promotionPiece.collectAsState()
     Log.d(TAG, "ChessGameScreen: pieces killed are: $piecesKilled")
 
     var checkMateDialog by remember {
@@ -147,7 +142,6 @@ fun ChessGameScreen(
                 },
                 checkPosition = checkPosition,
                 piecesKilled = piecesKilled,
-                movesMade = movesMade,
                 movesMadeSan = movesMadeSAN,
                 showPromotionDialog = showPawnPromotion,
                 aiLastMove = aiLastMove
@@ -200,9 +194,7 @@ fun PawnPromotionDialog(
 ) {
     var selectedOption by remember { mutableStateOf<ChessPiece?>(null) }
 
-    AlertDialog(
-        onDismissRequest = onDismiss,
-    ) {
+    BasicAlertDialog(onDismissRequest = onDismiss) {
         Surface(
             modifier = Modifier.fillMaxWidth(),
             tonalElevation = 4.dp,
@@ -324,9 +316,7 @@ fun CheckmateDialog(
     onNewGameSelected: () -> Unit,
     onViewBoardSelected: () -> Unit,
 ) {
-    AlertDialog(
-        onDismissRequest = { /* Handle dialog dismissal */ },
-    ) {
+    BasicAlertDialog(onDismissRequest = { /* Handle dialog dismissal */ }) {
         Surface(
             modifier = Modifier.fillMaxWidth(),
             tonalElevation = 4.dp,
@@ -416,7 +406,6 @@ fun ChessGrid(
     onExitGame: () -> Unit,
     checkPosition: Position,
     piecesKilled: MutableList<ChessPiece>,
-    movesMade: MutableList<String>,
     movesMadeSan: MutableList<SANMovePair>,
     showPromotionDialog: Boolean,
     aiLastMove: Move?
@@ -503,7 +492,7 @@ fun ChessGrid(
                 Spacer(modifier = Modifier.weight(1f))
                 Surface(
                     shape = CircleShape,
-                    modifier = Modifier.size(40.dp),
+                    modifier = Modifier.size(30.dp),
                     color = Color(0xFFA26232),
                     tonalElevation = 8.dp
                 ) {
@@ -519,7 +508,7 @@ fun ChessGrid(
                 Spacer(modifier = Modifier.weight(0.3f))
                 Surface(
                     shape = CircleShape,
-                    modifier = Modifier.size(40.dp),
+                    modifier = Modifier.size(30.dp),
                     color = Color(0xFFA26232),
                     tonalElevation = 8.dp
                 ) {
@@ -639,7 +628,7 @@ fun ChessGrid(
                 Spacer(modifier = Modifier.weight(1f))
                 Surface(
                     shape = CircleShape,
-                    modifier = Modifier.size(40.dp),
+                    modifier = Modifier.size(30.dp),
                     color = Color(0xFFA26232),
                     tonalElevation = 8.dp
                 ) {
@@ -655,7 +644,7 @@ fun ChessGrid(
                 Spacer(modifier = Modifier.weight(0.3f))
                 Surface(
                     shape = CircleShape,
-                    modifier = Modifier.size(40.dp),
+                    modifier = Modifier.size(30.dp),
                     color = Color(0xFFA26232),
                     tonalElevation = 8.dp
                 ) {
@@ -691,8 +680,8 @@ fun ChessSquare(
     val piece = spot.chessPiece
 
     //val offset = remember { Animatable(Offset(0f, 0f), Offset.VectorConverter) }
-    val isMoveOrigin = lastMove != null && currentPosition == lastMove.from
-    val isMoveDestination = lastMove != null && currentPosition == lastMove.to
+//    val isMoveOrigin = lastMove != null && currentPosition == lastMove.from
+//    val isMoveDestination = lastMove != null && currentPosition == lastMove.to
 
 //    LaunchedEffect(lastMove?.moveId) {
 //        if (isMoveOrigin) {
@@ -727,7 +716,7 @@ fun ChessSquare(
 
     val backgroundColor = when {
         isWhite -> Color.White
-        else -> Color(0xFFA26232) // Brown color
+        else -> Color(0xFFA26232)
     }
 
     Box(
@@ -840,9 +829,7 @@ fun Panel(
     Surface(
         modifier = modifier
             .height(60.dp)
-            .fillMaxWidth()
-            .padding(start = 4.dp, end = 4.dp),
-        shape = RoundedCornerShape(8.dp),
+            .fillMaxWidth(),
         color = Color(0xFFA26232),
         tonalElevation = 2.dp,
         contentColor = Color.Black
@@ -855,7 +842,8 @@ fun Panel(
                 LazyRow(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(32.dp),
+                        .height(32.dp)
+                        .padding(4.dp),
                     horizontalArrangement = Arrangement.spacedBy(4.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
