@@ -1,10 +1,15 @@
 package com.example.chess.presentation
 
 import android.content.Context
+import android.media.AudioAttributes
+import android.media.SoundPool
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.chess.R
 import com.example.chess.data.model.AILevel
+import com.example.chess.data.model.AnalysisResult
 import com.example.chess.data.model.Board
 import com.example.chess.data.model.ChessPiece
 import com.example.chess.data.model.Color
@@ -94,14 +99,35 @@ class ChessGameViewModel @Inject constructor(
     private val _movesMadeSAN = MutableStateFlow<MutableList<SANMovePair>>(mutableListOf())
     val movesMadeSAN: StateFlow<MutableList<SANMovePair>> = _movesMadeSAN.asStateFlow()
 
+    private val _analysisResult = MutableStateFlow<AnalysisResult?>(value = null)
+    val analysisResult: StateFlow<AnalysisResult?> = _analysisResult.asStateFlow()
+
 
     private var aiJob: Job? = null
+
+    private lateinit var soundPool: SoundPool
+    private var moveSoundId: Int = 0
+    private var captureSoundId: Int = 0
 
     init {
         viewModelScope.launch {
             game.stockfish.startStockfish("${context.applicationInfo.nativeLibraryDir}/lib_chess.so")
             game.stockfish.sendCommand("uci")
         }
+    }
+
+    fun initializeSounds(context: Context) {
+        soundPool = SoundPool.Builder()
+            .setMaxStreams(2) // Allow 2 sounds at once
+            .setAudioAttributes(
+                AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_GAME)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                    .build()
+            )
+            .build()
+        moveSoundId = soundPool.load(context, R.raw.move_self, 1)
+        captureSoundId = soundPool.load(context, R.raw.capture, 1)
     }
 
 
@@ -155,12 +181,19 @@ class ChessGameViewModel @Inject constructor(
         }
     }
 
+    fun analyzeGame() {
+        viewModelScope.launch {
+            _analysisResult.value = game.analyzeMoveScores(_movesMade.value)
+        }
+    }
+
     // Extracted reusable function for AI move handling and state updates
     private suspend fun handleAIMoveAndUpdateState(player: Player) {
         try {
             Log.d(TAG, "AI turn started: ${player.playerType}")
             game.handleAIMove(player, _level.value)
             val aiLastMove = game.aiLastMove
+            val isCapture = aiLastMove?.pieceKilled != null
             if (aiLastMove != null) {
                 _aiLastMove.value = Move(aiLastMove.from.position, aiLastMove.to.position)
                 Log.d(TAG, "handleAIMoveAndUpdateState: aiLastMove is $aiLastMove")
@@ -185,6 +218,10 @@ class ChessGameViewModel @Inject constructor(
                 game.status,
                 game.aiStartPosition
             )
+
+            if (isCapture) soundPool.play(captureSoundId, 0.5f, 0.5f, 1, 0, 1f) else
+                soundPool.play(moveSoundId, 0.5f, 0.5f, 1, 0, 1f)
+
         } catch (e: Exception) {
             Log.e(TAG, "Error in AI move: ${e.message}", e)
         }
@@ -289,7 +326,6 @@ class ChessGameViewModel @Inject constructor(
         val selectedSpot = _selectedPiecePosition.value ?: return
         val targetSpot = game.board.getBox(targetPosition.row, targetPosition.column)
 
-        // Update lastMove to trigger animation, but don't move the piece yet
         _lastMove.value = Move(selectedSpot.position, targetPosition)
         _validMoves.value = emptyList()
 
@@ -325,6 +361,7 @@ class ChessGameViewModel @Inject constructor(
     private fun makeMove(player: Player, start: Spot, end: Spot): Boolean {
         // Handle the human player's move synchronously
         val value = game.handleHumanMove(player, start, end)
+        val isCaptureMove = end.chessPiece != null
         checkForPawnPromotion(end)
         _piecesKilled.value = game.piecesKilled.toMutableList()
         _movesMade.value = game.convertMovesToNotation(game.movesPlayed)
@@ -343,6 +380,9 @@ class ChessGameViewModel @Inject constructor(
         Log.d(TAG, "makeMove last move is: ${_boardState.value.lastMovedFrom}")
         // Check for pawn promotion after move
         checkForPawnPromotion(end)
+
+        if (isCaptureMove) soundPool.play(captureSoundId, 0.5f, 0.5f, 1, 0, 1f) else
+            soundPool.play(moveSoundId, 0.5f, 0.5f, 1, 0, 1f)
         return value
     }
 
