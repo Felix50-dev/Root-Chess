@@ -2,12 +2,10 @@ package com.example.chess.data
 
 import android.util.Log
 import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.BufferedReader
 import java.io.BufferedWriter
@@ -44,8 +42,18 @@ class StockfishEngine {
                 val reader = BufferedReader(InputStreamReader(p.inputStream))
                 try {
                     var line: String?
+                    var evaluation: Int?
                     while (reader.readLine().also { line = it } != null) {
                         Log.d("Stockfish", "Stockfish Output: $line")
+
+                        // Extract evaluation score
+                        if (line!!.startsWith("info depth")) {
+                            val match = Regex("score cp (-?\\d+)").find(line!!)
+                            if (match != null) {
+                                evaluation = match.groupValues[1].toInt()
+                                Log.d("Stockfish", "Evaluation: $evaluation")
+                            }
+                        }
 
                         if (line!!.startsWith("bestmove")) {
                             val move = line!!.split(" ")[1]
@@ -62,6 +70,47 @@ class StockfishEngine {
 
         // Wait for the best move to be available and return it
         return bestMoveDeferred.await()
+    }
+
+    suspend fun getMoveScore(): Int {
+        val evaluationDeferred = CompletableDeferred<Int>()
+
+        withContext(Dispatchers.IO) {
+            process?.let { p ->
+                val reader = BufferedReader(InputStreamReader(p.inputStream))
+                try {
+                    var line: String?
+                    var bestEvaluation: Int? = null  // Store the best evaluation found
+
+                    while (reader.readLine().also { line = it } != null) {
+                        Log.d("Stockfish", "Stockfish Output: $line")
+
+                        // Extract evaluation score
+                        if (line!!.startsWith("info depth")) {
+                            val match = Regex("score cp (-?\\d+)").find(line!!)
+                            if (match != null) {
+                                bestEvaluation = match.groupValues[1].toInt()
+                                Log.d("Stockfish", "Evaluation: $bestEvaluation")
+                            }
+                        }
+
+                        // Stop when Stockfish outputs "bestmove"
+                        if (line!!.startsWith("bestmove")) {
+                            if (bestEvaluation != null) {
+                                evaluationDeferred.complete(bestEvaluation)
+                            } else {
+                                evaluationDeferred.complete(0)  // Default to 0 if no evaluation was found
+                            }
+                            break
+                        }
+                    }
+                } catch (e: IOException) {
+                    e.printStackTrace()
+                    evaluationDeferred.complete(0)  // Default to 0 in case of an error
+                }
+            }
+        }
+        return evaluationDeferred.await()
     }
 
 

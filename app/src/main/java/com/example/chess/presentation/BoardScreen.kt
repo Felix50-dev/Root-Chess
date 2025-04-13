@@ -3,12 +3,16 @@ package com.example.chess.presentation
 import android.util.Log
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -20,6 +24,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
@@ -29,6 +34,8 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.BasicAlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -37,6 +44,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -45,10 +53,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -74,7 +85,8 @@ private const val TAG = "BoardScreen"
 @Composable
 fun ChessGameScreen(
     chessGameViewModel: ChessGameViewModel,
-    onExitGame: () -> Unit
+    onExitGame: () -> Unit,
+    onAnalyzeGame: () -> Unit,
 ) {
     val boardState by chessGameViewModel.boardState.collectAsState()
     Log.d("ChessBoard", "Observed lastMovedFrom: ${boardState.lastMovedFrom}")
@@ -87,6 +99,11 @@ fun ChessGameScreen(
     val aiLastMove by chessGameViewModel.aiLastMove.collectAsState()
     val showPawnPromotion by chessGameViewModel.showPawnPromotion.collectAsState()
     Log.d(TAG, "ChessGameScreen: pieces killed are: $piecesKilled")
+
+    val context = LocalContext.current
+    LaunchedEffect(Unit) {
+        chessGameViewModel.initializeSounds(context)
+    }
 
     var checkMateDialog by remember {
         mutableStateOf(false)
@@ -139,6 +156,9 @@ fun ChessGameScreen(
                 },
                 onExitGame = {
                     onExitGame()
+                },
+                onAnalzeGame = {
+                    onAnalyzeGame()
                 },
                 checkPosition = checkPosition,
                 piecesKilled = piecesKilled,
@@ -404,6 +424,7 @@ fun ChessGrid(
     onStartNewGame: () -> Unit,
     onQuitGame: () -> Unit,
     onExitGame: () -> Unit,
+    onAnalzeGame: () -> Unit,
     checkPosition: Position,
     piecesKilled: MutableList<ChessPiece>,
     movesMadeSan: MutableList<SANMovePair>,
@@ -453,7 +474,7 @@ fun ChessGrid(
         )
     }
 
-    if (showPromotionDialog ) {
+    if (showPromotionDialog) {
         PawnPromotionDialog(
             onPromotionSelected = {
                 onSetPromotionPiece(it)
@@ -612,6 +633,14 @@ fun ChessGrid(
                 .align(Alignment.BottomStart)
                 .padding(bottom = 32.dp),
         ) {
+            AnalyzeGameButton(
+                modifier = Modifier
+                    .align(Alignment.CenterHorizontally)
+                    .padding(bottom = 16.dp),
+                text = "Analyze Game",
+                iconRes = R.drawable.baseline_fullscreen_exit_24,
+                onClick = { onAnalzeGame() }
+            )
             Panel(
                 lostPieces = blackPiecesKilled.toMutableList(),
                 moves = movesMadeSan,
@@ -820,6 +849,60 @@ fun ExitDialog(onConfirm: () -> Unit, onDismiss: () -> Unit) {
 }
 
 @Composable
+fun AnalyzeGameButton(
+    modifier: Modifier,
+    text: String,
+    iconRes: Int,
+    onClick: () -> Unit,
+) {
+    var isHovered by remember { mutableStateOf(false) }
+    val scale by animateFloatAsState(
+        targetValue = if (isHovered) 1.05f else 1f,
+        animationSpec = tween(durationMillis = 200)
+    )
+    val elevation by animateDpAsState(
+        targetValue = if (isHovered) 12.dp else 6.dp,
+        animationSpec = tween(durationMillis = 200)
+    )
+
+    Card(
+        modifier = modifier
+            .width(250.dp)
+            .scale(scale)
+            .pointerInput(Unit) {
+                detectTapGestures(
+                    onPress = { isHovered = true },
+                    onTap = { onClick(); isHovered = false }
+                )
+            },
+        shape = RoundedCornerShape(24.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = elevation),
+        colors = CardDefaults.cardColors(containerColor = Color(0xFFA26232).copy(0.9f))
+    ) {
+        Row(
+            modifier = Modifier
+                .padding(16.dp)
+                .fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = text,
+                style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Medium),
+                color = Color.White
+            )
+            Image(
+                painter = painterResource(iconRes),
+                contentDescription = "$text Icon",
+                modifier = Modifier
+                    .size(24.dp)
+                    .alpha(if (isHovered) 1f else 0.7f)
+            )
+        }
+    }
+}
+
+@Composable
 fun Panel(
     lostPieces: MutableList<ChessPiece?>,
     moves: List<SANMovePair>,
@@ -906,7 +989,9 @@ fun Panel(
                                         text = movePair.blackDestination,
                                         style = MaterialTheme.typography.bodySmall.copy(
                                             fontSize = 12.sp,
-                                            color = if (index == moves.lastIndex) Color(0xFF4CDA24) else Color.Black,
+                                            color = if (index == moves.lastIndex) Color(
+                                                0xFF4CDA24
+                                            ) else Color.Black,
                                             fontWeight = if (index == moves.lastIndex) FontWeight.Bold else FontWeight.Normal
                                         )
                                     )
@@ -928,56 +1013,56 @@ fun Panel(
                     }
                 }
             }
-                Row(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .height(24.dp)
-                        .horizontalScroll(rememberScrollState())
-                        .padding(horizontal = 6.dp, vertical = 4.dp),
-                    horizontalArrangement = Arrangement.spacedBy(2.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    lostPieces.forEach { piece ->
-                        if (piece != null) {
-                            Image(
-                                painter = painterResource(id = piece.vectorAsset),
-                                contentDescription = "${piece.color} $piece",
-                                modifier = Modifier
-                                    .size(24.dp) //
-                                    .background(
-                                        if (piece.color == com.example.chess.data.model.Color.WHITE) Color.White.copy(
-                                            alpha = 0.1f
-                                        )
-                                        else Color.Black.copy(alpha = 0.1f),
-                                        shape = CircleShape
+            Row(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .height(24.dp)
+                    .horizontalScroll(rememberScrollState())
+                    .padding(horizontal = 6.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(2.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                lostPieces.forEach { piece ->
+                    if (piece != null) {
+                        Image(
+                            painter = painterResource(id = piece.vectorAsset),
+                            contentDescription = "${piece.color} $piece",
+                            modifier = Modifier
+                                .size(24.dp) //
+                                .background(
+                                    if (piece.color == com.example.chess.data.model.Color.WHITE) Color.White.copy(
+                                        alpha = 0.1f
                                     )
-                            )
-                        }
+                                    else Color.Black.copy(alpha = 0.1f),
+                                    shape = CircleShape
+                                )
+                        )
                     }
-                    Spacer(modifier = Modifier.weight(1f)) // Push to the right
-                    Text(
-                        text = when {
-                            advantage > 0 -> "+$advantage"
-                            advantage < 0 -> "$advantage"
-                            else -> "+0"
-                        },
-                        style = MaterialTheme.typography.labelMedium.copy(
-                            fontSize = 14.sp,
-                            color = when {
-                                advantage > 0 -> Color(0xFF4CDA24) // Green for White advantage
-                                advantage < 0 -> Color.Red // Red for Black advantage
-                                else -> Color.Black.copy(alpha = 0.7f) // Neutral
-                            },
-                            fontWeight = FontWeight.Bold
-                        ),
-                        modifier = Modifier
-                            .padding(end = 4.dp)
-                            .align(Alignment.CenterVertically)
-                    )
                 }
+                Spacer(modifier = Modifier.weight(1f)) // Push to the right
+                Text(
+                    text = when {
+                        advantage > 0 -> "+$advantage"
+                        advantage < 0 -> "$advantage"
+                        else -> "+0"
+                    },
+                    style = MaterialTheme.typography.labelMedium.copy(
+                        fontSize = 14.sp,
+                        color = when {
+                            advantage > 0 -> Color(0xFF4CDA24) // Green for White advantage
+                            advantage < 0 -> Color.Red // Red for Black advantage
+                            else -> Color.Black.copy(alpha = 0.7f) // Neutral
+                        },
+                        fontWeight = FontWeight.Bold
+                    ),
+                    modifier = Modifier
+                        .padding(end = 4.dp)
+                        .align(Alignment.CenterVertically)
+                )
             }
         }
     }
+}
 
 fun calculateMaterialAdvantage(lostPieces: List<ChessPiece?>): Int {
     val pieceValues = mapOf(

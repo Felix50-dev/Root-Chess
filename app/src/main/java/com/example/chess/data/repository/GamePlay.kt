@@ -4,6 +4,7 @@ import android.util.Log
 import com.example.chess.R
 import com.example.chess.data.StockfishEngine
 import com.example.chess.data.model.AILevel
+import com.example.chess.data.model.AnalysisResult
 import com.example.chess.data.model.Bishop
 import com.example.chess.data.model.Board
 import com.example.chess.data.model.ChessPiece
@@ -25,7 +26,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
+import java.util.Locale
 import javax.inject.Inject
+import kotlin.math.exp
 
 private const val TAG = "GamePlay"
 
@@ -90,6 +93,112 @@ class GamePlay @Inject constructor(
             }
         }
         return false
+    }
+
+    suspend fun analyzeMoveScores(movesPlayed: List<String>): AnalysisResult {
+        val evaluations = mutableListOf<Int>()
+        val losses = mutableListOf<Int>()
+
+        val categoryCounts = mutableMapOf(
+            "Best" to intArrayOf(0, 0),
+            "Great" to intArrayOf(0, 0),
+            "Inaccurate" to intArrayOf(0, 0),
+            "Mistake" to intArrayOf(0, 0),
+            "Blunder" to intArrayOf(0, 0),
+            "Brilliant" to intArrayOf(0, 0)
+        )
+
+
+        for (i in movesPlayed.indices) { 
+            // Set position before the move (moves 0 to i-1)
+            val partialMovesBefore = if (i > 0) movesPlayed.subList(0, i).joinToString(" ") else ""
+            stockfish.sendCommand("position startpos moves $partialMovesBefore")
+            stockfish.sendCommand("go depth 10")
+
+            // Get the best move's evaluation from the player's perspective
+            val scoreBestForPlayer = stockfish.getMoveScore()
+            // Convert to White's perspective
+            val scoreBestAfterFromWhite = if (i % 2 == 0) scoreBestForPlayer else - scoreBestForPlayer
+
+            // Set position after the actual move (moves 0 to i)
+            val partialMovesAfter = movesPlayed.subList(0, i + 1).joinToString(" ")
+            stockfish.sendCommand("position startpos moves $partialMovesAfter")
+            stockfish.sendCommand("go depth 2")
+
+            // Get the evaluation after the actual move from the opponent's perspective
+            val scoreAfterFromOpponent = stockfish.getMoveScore()
+            // Convert to White's perspective
+            val scoreAfterFromWhite = if (i % 2 == 0) - scoreAfterFromOpponent else scoreAfterFromOpponent
+
+            // Calculate loss based on whose move it is
+            val loss = if (i % 2 == 0) {
+                // White's move: loss = S_best_after_from_white - S_after_from_white
+                scoreBestAfterFromWhite - scoreAfterFromWhite
+            } else {
+                // Black's move: loss = S_after_from_white - S_best_after_from_white
+                scoreAfterFromWhite - scoreBestAfterFromWhite
+            }
+            losses.add(loss)
+
+            // Calculate delta (improvement in the position)
+            val scoreBeforeFromWhite = if (i > 0) evaluations[i - 1] else 0
+            val delta = if (i % 2 == 0) {
+                // White: improvement if S_after increases
+                scoreAfterFromWhite - scoreBeforeFromWhite
+            } else {
+                // Black: improvement if S_after decreases
+                scoreBeforeFromWhite - scoreAfterFromWhite
+            }
+
+            // Categorize the move based on loss
+            var category = when {
+                loss <= 10 -> "Best"
+                loss <= 50 -> "Great"
+                loss <= 100 -> "Inaccurate"
+                loss <= 300 -> "Mistake"
+                else -> "Blunder"
+            }
+
+            val colorIndex = if (i % 2 == 0) 0 else 1 // 0 = White, 1 = Black
+            categoryCounts[category]?.let { it[colorIndex]++ }
+
+            // Check for Brilliant: Best move with significant improvement and a capture
+            if (category == "Best" && delta >= 200 && movesPlayed[i].contains("x")) {
+                category = "Brilliant"
+            }
+
+            // Log the analysis result
+            Log.d("ChessAnalysis", "Move ${movesPlayed[i]}: $category (Loss: $loss, Delta: $delta)")
+
+            // Store the evaluation from White's perspective
+            evaluations.add(scoreAfterFromWhite)
+        }
+
+        // Calculate accuracies
+        val scalingFactor = 100.0
+        val whiteLosses = losses.filterIndexed { index, _ -> index % 2 == 0 }
+        val blackLosses = losses.filterIndexed { index, _ -> index % 2 == 1 }
+
+        val whiteAccuracy = if (whiteLosses.isNotEmpty()) {
+            whiteLosses.map { exp(-it.toDouble() / scalingFactor) }.average() * 100
+        } else {
+            0.0
+        }
+        val blackAccuracy = if (blackLosses.isNotEmpty()) {
+            blackLosses.map { exp(-it.toDouble() / scalingFactor) }.average() * 100
+        } else {
+            0.0
+        }
+
+        val formattedWhiteAccuracy = String.format(Locale.US, "%.1f", whiteAccuracy).toDouble()
+        val formattedBlackAccuracy = String.format(Locale.US,"%.1f", blackAccuracy).toDouble()
+
+        val whiteCategoryCounts = categoryCounts.mapValues { it.value[0] }
+        val blackCategoryCounts = categoryCounts.mapValues { it.value[1] }
+
+        Log.d(TAG, "analyzeMoveScores: black accuracy is $blackAccuracy, white accuracy is $whiteAccuracy")
+
+        return AnalysisResult(evaluations, formattedWhiteAccuracy, formattedBlackAccuracy, whiteCategoryCounts, blackCategoryCounts)
     }
 
     suspend fun handleAIMove(player: Player, level: AILevel): Boolean = withContext(Dispatchers.IO) {

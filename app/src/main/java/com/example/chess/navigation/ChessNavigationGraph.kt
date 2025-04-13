@@ -8,6 +8,8 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import com.example.chess.data.model.AILevel
 import com.example.chess.data.model.GameMode
+import com.example.chess.presentation.BoardAnalysisScreen
+import com.example.chess.presentation.ChessAnalysisScreen
 import com.example.chess.presentation.ChessGameScreen
 import com.example.chess.presentation.ChessGameViewModel
 import com.example.chess.presentation.ComputerModeScreen
@@ -22,6 +24,8 @@ object RootChessDestinations {
     const val LEVEL_ROUTE = "level"
     const val COLOR_ROUTE = "color"
     const val OTHER_ROUTE = "other"
+    const val ANALYSIS_ROUTE = "analysis"
+    const val REVIEW_GAME_ROUTE = "review"
 }
 
 @Composable
@@ -58,7 +62,11 @@ fun RootChessNavHost(
         ) {
             ChessGameScreen(
                 chessGameViewModel = viewModel,
-                onExitGame = { navController.navigate(RootChessDestinations.HOME_ROUTE) }
+                onExitGame = { navController.navigate(RootChessDestinations.HOME_ROUTE) },
+                onAnalyzeGame = {
+                    navController.navigate(RootChessDestinations.ANALYSIS_ROUTE)
+                    viewModel.analyzeGame()
+                }
             )
         }
 
@@ -98,7 +106,29 @@ fun RootChessNavHost(
         ) {
             ChessGameScreen(
                 chessGameViewModel = viewModel,
-                onExitGame = { navController.navigate(RootChessDestinations.HOME_ROUTE) }
+                onExitGame = { navController.navigate(RootChessDestinations.HOME_ROUTE) },
+                onAnalyzeGame = {
+                    navController.navigate(RootChessDestinations.ANALYSIS_ROUTE)
+                    viewModel.analyzeGame()
+                }
+            )
+        }
+        composable (
+            route = RootChessDestinations.ANALYSIS_ROUTE
+        ) {
+            ChessAnalysisScreen(
+                chessGameViewModel = viewModel,
+                onStartReview = {
+                    navController.navigate(RootChessDestinations.REVIEW_GAME_ROUTE)
+                }
+
+            )
+        }
+        composable (
+            route = RootChessDestinations.REVIEW_GAME_ROUTE
+        ) {
+            BoardAnalysisScreen(
+                chessGameViewModel = viewModel
             )
         }
     }
