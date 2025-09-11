@@ -72,44 +72,48 @@ class StockfishEngine {
         return bestMoveDeferred.await()
     }
 
-    suspend fun getMoveScore(): Int {
-        val evaluationDeferred = CompletableDeferred<Int>()
+    suspend fun getMoveScore(): Triple<Int, String, Int> {
+        val evaluationDeferred = CompletableDeferred<Triple<Int, String, Int>>()
+        val mateRegex = Regex("score mate (-?\\d+)")
+        var mateIn = 0
 
         withContext(Dispatchers.IO) {
             process?.let { p ->
                 val reader = BufferedReader(InputStreamReader(p.inputStream))
                 try {
                     var line: String?
-                    var bestEvaluation: Int? = null  // Store the best evaluation found
+                    var bestEvaluation: Int? = null
+                    val bestMove: String?  // FIXED: use var instead of val
 
                     while (reader.readLine().also { line = it } != null) {
                         Log.d("Stockfish", "Stockfish Output: $line")
 
-                        // Extract evaluation score
                         if (line!!.startsWith("info depth")) {
-                            val match = Regex("score cp (-?\\d+)").find(line!!)
-                            if (match != null) {
-                                bestEvaluation = match.groupValues[1].toInt()
+                            Regex("score cp (-?\\d+)").find(line!!)?.let {
+                                bestEvaluation = it.groupValues[1].toInt()
                                 Log.d("Stockfish", "Evaluation: $bestEvaluation")
+                            }
+                            mateRegex.find(line!!)?.let {
+                                mateIn = it.groupValues[1].toInt()
+                                Log.d("Stockfish", "Mate in: $mateIn")
                             }
                         }
 
-                        // Stop when Stockfish outputs "bestmove"
                         if (line!!.startsWith("bestmove")) {
-                            if (bestEvaluation != null) {
-                                evaluationDeferred.complete(bestEvaluation)
-                            } else {
-                                evaluationDeferred.complete(0)  // Default to 0 if no evaluation was found
-                            }
+                            bestMove = line!!.split(" ")[1]
+                            evaluationDeferred.complete(
+                                Triple(bestEvaluation ?: 0, bestMove ?: "", mateIn)
+                            )
                             break
                         }
                     }
                 } catch (e: IOException) {
                     e.printStackTrace()
-                    evaluationDeferred.complete(0)  // Default to 0 in case of an error
+                    evaluationDeferred.complete(Triple(0, "", 0))
                 }
             }
         }
+
         return evaluationDeferred.await()
     }
 

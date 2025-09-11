@@ -29,7 +29,7 @@ android {
         }
 
         ndk {
-            abiFilters += "arm64-v8a"
+            abiFilters += listOf("armeabi-v7a", "arm64-v8a", "x86", "x86_64")
         }
 
         externalNativeBuild {
@@ -102,9 +102,10 @@ dependencies {
     kapt("androidx.hilt:hilt-compiler:1.2.0")
     implementation("androidx.hilt:hilt-navigation-compose:1.2.0")
     implementation ("com.airbnb.android:lottie-compose:6.4.0")
-
+    implementation ("androidx.compose.material:material-icons-extended:1.7.8")
+    testImplementation ("junit:junit:4.13.2")
+    testImplementation("org.mockito:mockito-core:5.2.0")
     implementation(fileTree("libs") {
         include("*.jar", "*.so")
     })
-
 }

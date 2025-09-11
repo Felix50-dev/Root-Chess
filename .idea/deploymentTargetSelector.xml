@@ -4,16 +4,25 @@
     <selectionStates>
       <SelectionState runConfigName="app">
         <option name="selectionMode" value="DROPDOWN" />
-        <DropdownSelection timestamp="2025-03-17T22:27:06.771867900Z">
+        <DropdownSelection timestamp="2025-05-29T07:01:06.133621400Z">
           <Target type="DEFAULT_BOOT">
             <handle>
-              <DeviceId pluginId="LocalEmulator" identifier="path=C:\Users\admin\.android\avd\Copy_of_Medium_Phone_API_34_3.avd" />
+              <DeviceId pluginId="LocalEmulator" identifier="path=C:\Users\admin\.android\avd\Copy_of_Medium_Phone_API_34_3_2.avd" />
             </handle>
           </Target>
         </DropdownSelection>
         <DialogSelection />
       </SelectionState>
       <SelectionState runConfigName="ChessAnalysisScreenPreview">
+        <option name="selectionMode" value="DROPDOWN" />
+      </SelectionState>
+      <SelectionState runConfigName="testConvertToMoveObjectForNormalMove()">
+        <option name="selectionMode" value="DROPDOWN" />
+      </SelectionState>
+      <SelectionState runConfigName="GamePlayTest">
+        <option name="selectionMode" value="DROPDOWN" />
+      </SelectionState>
+      <SelectionState runConfigName="testConvertToMoveObjectForNormalMoveKillsPiece()">
         <option name="selectionMode" value="DROPDOWN" />
       </SelectionState>
     </selectionStates>

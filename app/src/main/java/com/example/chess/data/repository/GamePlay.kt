@@ -7,11 +7,13 @@ import com.example.chess.data.model.AILevel
 import com.example.chess.data.model.AnalysisResult
 import com.example.chess.data.model.Bishop
 import com.example.chess.data.model.Board
+import com.example.chess.data.model.CaptureOpportunity
 import com.example.chess.data.model.ChessPiece
 import com.example.chess.data.model.Color
 import com.example.chess.data.model.GameStatus
 import com.example.chess.data.model.King
 import com.example.chess.data.model.Knight
+import com.example.chess.data.model.MissedMate
 import com.example.chess.data.model.Move
 import com.example.chess.data.model.Pawn
 import com.example.chess.data.model.Player
@@ -28,7 +30,6 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
 import java.util.Locale
 import javax.inject.Inject
-import kotlin.math.exp
 
 private const val TAG = "GamePlay"
 
@@ -46,46 +47,60 @@ class GamePlay @Inject constructor(
     lateinit var aiStartPosition: Position
 
     // StateFlow for the promotion piece
-    private val _promotionPieceFlow = MutableStateFlow<ChessPiece?>(null)
+    val _promotionPieceFlow = MutableStateFlow<ChessPiece?>(null)
     private val promotionPieceFlow: StateFlow<ChessPiece?> = _promotionPieceFlow.asStateFlow()
 
     //AI last move
     var aiLastMove: Move? = null
 
-    fun init(p1: Player, p2: Player) {
+    fun init(p1: Player, p2: Player, canClearMoves: Boolean) {
         isGameOver = false
         players = listOf(p1, p2)
         board.boxes = board.resetBoard()
 
         currentTurn.value = if (p1.isWhite) {
-            Log.d(TAG, "init: current turn is $p2")
             p1
         } else {
-            Log.d(TAG, "init: current turn is $p2")
             p2
         }
-
-        movesPlayed.clear()
-        movesUndone.clear()
+        Log.d(TAG, "init: current turn is ${currentTurn.value}")
+        if (canClearMoves) {
+            movesPlayed.clear()
+            movesUndone.clear()
+            piecesKilled.clear()
+        }
         status = GameStatus.ACTIVE
     }
 
-    fun handleHumanMove(player: Player, start: Spot, end: Spot): Boolean {
-        if (isGameOver) return false
+    fun handleHumanMove(player: Player, start: Spot, end: Spot, isReviewMode: Boolean, board: Board): Boolean {
+        Log.d(TAG, "handleHumanMove: function started")
+        if (isGameOver && !isReviewMode) return false
+        Log.d(TAG, "handleHumanMove: function ended")
         val startBox = board.getBox(start.position.row, start.position.column)
         val endBox = board.getBox(end.position.row, end.position.column)
-        val move = Move(startBox, endBox, player, start.chessPiece)
-
+        val move: Move = if (isReviewMode) {
+            Move(startBox, endBox, player, startBox.chessPiece)
+        } else {
+            Move(startBox, endBox, player, start.chessPiece)
+        }
+        Log.d(TAG, "handleHumanMove reached this point: $move")
         val playerColor = if (player.isWhite) Color.WHITE else Color.BLACK
 
         // Make the move
         if (currentTurn.value?.playerType == PlayerType.HUMAN && makeMove(board, move, player)) {
+            Log.d(TAG, "handleHumanMove: passed this point")
+            Log.d(TAG, "handleHumanMove: move made is $move board state is ${board.boxes}")
             // Validate the move
             if (isMoveValid(player, playerColor)) {
                 checkForWinner(player)
-                if (!isGameOver) {
+                if (isReviewMode) {
                     changeCurrentTurn()
                     return true
+                } else {
+                    if (!isGameOver) {
+                        changeCurrentTurn()
+                        return true
+                    }
                 }
             } else {
                 Log.d(TAG, "handleHumanMove: a move undone")
@@ -95,9 +110,119 @@ class GamePlay @Inject constructor(
         return false
     }
 
+    private fun getCaptureOpportunity(
+        board: Board,
+        from: Position,
+        to: Position,
+        player: Player
+    ): CaptureOpportunity? {
+        val attacker = board.getBox(from.row, from.column).chessPiece ?: return null
+        val target = board.getBox(to.row, to.column).chessPiece ?: return null
+
+        val attackerValue = attacker.value
+        val targetValue = target.value
+
+        // Step 1: check if square is defended
+        val opponent = if (player.isWhite) players[1] else players[0]
+        val opponentPieces = getAlivePieces(opponent, board)
+
+        val defended = opponentPieces.any {
+            val validMoves = getRemainingValidMoves(it.position, opponent, board)
+            to in validMoves
+        }
+
+        // Step 2: return info
+        val isProfitable = !defended || (targetValue > attackerValue)
+        return if (isProfitable) {
+            val captureOpportunity = CaptureOpportunity(target.clone(), attacker.clone(), true)
+
+            Log.d(TAG, "getCaptureOpportunity: capture opportunity at: ${captureOpportunity.target}")
+            captureOpportunity
+        } else {
+            null
+        }
+    }
+
+    private fun ChessPiece.clone(): ChessPiece = when (this) {
+        is Pawn -> Pawn(color, Position(position.row, position.column), isKilled, vectorAsset, hasMoved, canEnPassant, value)
+        is Queen -> Queen(color, Position(position.row, position.column), isKilled, vectorAsset, hasMoved, canEnPassant, value)
+        is Rook -> Rook(color, Position(position.row, position.column), isKilled, vectorAsset, hasMoved, canEnPassant, value)
+        is Bishop -> Bishop(color, Position(position.row, position.column), isKilled, vectorAsset, hasMoved, canEnPassant, value)
+        is Knight -> Knight(color, Position(position.row, position.column), isKilled, vectorAsset, hasMoved, canEnPassant, value)
+        is King -> King(color, Position(position.row, position.column), isKilled, vectorAsset, hasMoved, canEnPassant, value)
+    }
+
+    fun convertToMoveObject(moveStr: String, board: Board, player: Player): Move {
+        if (moveStr.length < 4) {
+            Log.d(TAG, "convertToMoveObject: Invalid move string: '$moveStr'")
+        }
+        Log.d(TAG, "convertToMoveObject: board state is ${board.boxes}")
+
+        val fromCol = moveStr[0] - 'a'
+        val fromRow = 8 - (moveStr[1] - '0')
+        val toCol = moveStr[2] - 'a'
+        val toRow = 8 - (moveStr[3] - '0')
+
+        val fromBox = board.getBox(fromRow, fromCol)
+        Log.d(TAG, "convertToMoveObject: from: $fromBox")
+        val toBox = board.getBox(toRow, toCol)
+        Log.d(TAG, "convertToMoveObject: to: $toBox")
+        val pieceMoved = fromBox.chessPiece
+        val pieceKilled = toBox.chessPiece
+        Log.d(TAG, "convertToMoveObject: piece is $pieceMoved")
+        Log.d(TAG, "convertToMoveObject: piece is $pieceKilled")
+        var promotionPiece: ChessPiece? = null
+
+        if (moveStr.length == 5 && pieceMoved is Pawn) {
+            val promotionChar = moveStr[4]
+            promotionPiece = when (promotionChar.lowercaseChar()) {
+                'q' -> Queen(pieceMoved.color, toBox.position, false)
+                'r' -> Rook(pieceMoved.color, toBox.position, false)
+                'b' -> Bishop(pieceMoved.color, toBox.position, false)
+                'n' -> Knight(pieceMoved.color, toBox.position, false)
+                else -> null
+            }
+        }
+
+        _promotionPieceFlow.value = promotionPiece
+
+        return Move(
+            from = fromBox,
+            to = toBox,
+            player = player,
+            pieceMoved = pieceMoved,
+            pieceKilled = pieceKilled
+        )
+    }
+
+    private fun applyMove(move: Move) {
+        val fromBox = move.from
+        val toBox = move.to
+
+        // Clear origin
+        fromBox.chessPiece = null
+
+        // Place piece on destination (or promoted piece)
+        val pieceToPlace = move.pieceMoved
+        toBox.chessPiece = pieceToPlace
+
+        // Update piece position
+        pieceToPlace?.position = toBox.position
+
+        Log.d(TAG, "applyMove: applied move $move")
+    }
+
+
+
     suspend fun analyzeMoveScores(movesPlayed: List<String>): AnalysisResult {
         val evaluations = mutableListOf<Int>()
         val losses = mutableListOf<Int>()
+        val moveCategories = mutableListOf<String>()
+        val bestMoves = mutableListOf<String>()
+        val firstBoard = Board()
+        val captureOpportunities = mutableListOf<CaptureOpportunity?>()
+        val missedMates = mutableListOf<MissedMate?>()
+        val tactics = mutableListOf<List<String>>()
 
         val categoryCounts = mutableMapOf(
             "Best" to intArrayOf(0, 0),
@@ -105,49 +230,74 @@ class GamePlay @Inject constructor(
             "Inaccurate" to intArrayOf(0, 0),
             "Mistake" to intArrayOf(0, 0),
             "Blunder" to intArrayOf(0, 0),
-            "Brilliant" to intArrayOf(0, 0)
+            "Brilliant" to intArrayOf(0, 0),
+            "Miss" to intArrayOf(0, 0),
+            "MissedMate" to intArrayOf(0,0)
         )
 
 
-        for (i in movesPlayed.indices) { 
-            // Set position before the move (moves 0 to i-1)
+        for (i in movesPlayed.indices) {
             val partialMovesBefore = if (i > 0) movesPlayed.subList(0, i).joinToString(" ") else ""
             stockfish.sendCommand("position startpos moves $partialMovesBefore")
             stockfish.sendCommand("go depth 10")
 
-            // Get the best move's evaluation from the player's perspective
-            val scoreBestForPlayer = stockfish.getMoveScore()
-            // Convert to White's perspective
-            val scoreBestAfterFromWhite = if (i % 2 == 0) scoreBestForPlayer else - scoreBestForPlayer
+            val (scoreBestForPlayer,  recommendedMove, mateInBefore) = stockfish.getMoveScore()
+            val currentPlayer = if (i % 2 == 0) players[0] else players[1]
+            val recommendedMoveObject = convertToMoveObject(recommendedMove, firstBoard, currentPlayer)
+            Log.d(TAG, "analyzeMoveScores: recommended move is $recommendedMoveObject")
 
-            // Set position after the actual move (moves 0 to i)
+            val scoreBestForWhite = if (i % 2 == 0) scoreBestForPlayer else -scoreBestForPlayer
+
             val partialMovesAfter = movesPlayed.subList(0, i + 1).joinToString(" ")
+            val partialMove = movesPlayed[i]
+            Log.d(TAG, "analyzeMoveScores: move made is $partialMove")
             stockfish.sendCommand("position startpos moves $partialMovesAfter")
-            stockfish.sendCommand("go depth 2")
+            stockfish.sendCommand("go depth 10")
 
-            // Get the evaluation after the actual move from the opponent's perspective
-            val scoreAfterFromOpponent = stockfish.getMoveScore()
-            // Convert to White's perspective
-            val scoreAfterFromWhite = if (i % 2 == 0) - scoreAfterFromOpponent else scoreAfterFromOpponent
+            val (scoreAfterFromOpponent, _, mateInAfter ) = stockfish.getMoveScore()
+            val playerMove = convertToMoveObject(partialMove, firstBoard, currentPlayer)
+            Log.d(
+                TAG,
+                "analyzeMoveScores: cp score is $scoreBestForPlayer move is $playerMove string is $partialMove"
+            )
+            //Log.d(TAG, "analyzeMoveScores: cp score is $scoreAfterFromOpponent")
 
-            // Calculate loss based on whose move it is
+            bestMoves.add(recommendedMove)
+
+            val scoreAfterFromWhite =
+                if (i % 2 == 0) -scoreAfterFromOpponent else scoreAfterFromOpponent
+
             val loss = if (i % 2 == 0) {
-                // White's move: loss = S_best_after_from_white - S_after_from_white
-                scoreBestAfterFromWhite - scoreAfterFromWhite
+                scoreBestForWhite - scoreAfterFromWhite
             } else {
-                // Black's move: loss = S_after_from_white - S_best_after_from_white
-                scoreAfterFromWhite - scoreBestAfterFromWhite
+                scoreAfterFromWhite - scoreBestForWhite
             }
+
             losses.add(loss)
 
-            // Calculate delta (improvement in the position)
-            val scoreBeforeFromWhite = if (i > 0) evaluations[i - 1] else 0
             val delta = if (i % 2 == 0) {
-                // White: improvement if S_after increases
-                scoreAfterFromWhite - scoreBeforeFromWhite
+                scoreAfterFromWhite - scoreBestForWhite
             } else {
                 // Black: improvement if S_after decreases
-                scoreBeforeFromWhite - scoreAfterFromWhite
+                scoreBestForWhite - scoreAfterFromWhite
+            }
+
+            val recommendedMoveGain = if (i % 2 == 0) {
+                scoreBestForWhite - scoreAfterFromWhite
+            } else {
+                scoreAfterFromWhite - scoreBestForWhite
+            }
+
+            if (i % 2 == 0) {
+                Log.d(
+                    TAG,
+                    "analyzeMoveScores: recommendedMove for white is $recommendedMove loss for white is $loss delta is $delta "
+                )
+            } else {
+                Log.d(
+                    TAG,
+                    "analyzeMoveScores: recommendedMove for black is $recommendedMove loss for black is $loss delta is $delta"
+                )
             }
 
             // Categorize the move based on loss
@@ -159,103 +309,179 @@ class GamePlay @Inject constructor(
                 else -> "Blunder"
             }
 
-            val colorIndex = if (i % 2 == 0) 0 else 1 // 0 = White, 1 = Black
-            categoryCounts[category]?.let { it[colorIndex]++ }
+            //check if player missed a free piece
+            val initialPosition = recommendedMoveObject.from.position
+            val targetPosition = recommendedMoveObject.to.position
+            val capturedPiece = firstBoard.getBox(targetPosition.row, targetPosition.column).chessPiece
+            val captureOpportunity = getCaptureOpportunity(firstBoard, initialPosition,targetPosition, currentPlayer)
+            captureOpportunities.add(captureOpportunity)
+            Log.d(TAG, "analyzeMoveScores: target square is $targetPosition captured piece is $capturedPiece")
 
-            // Check for Brilliant: Best move with significant improvement and a capture
-            if (category == "Best" && delta >= 200 && movesPlayed[i].contains("x")) {
+            val playerColor = if (i % 2 == 0) Color.WHITE else Color.BLACK
+
+            if (capturedPiece != null && capturedPiece.color != playerColor) {
+                Log.d(TAG, "analyzeMoveScores: capture opportunity is: $captureOpportunity")
+                val canCapture = captureOpportunity?.isProfitable
+                Log.d(TAG, "analyzeMoveScores: is piece at $targetPosition canCapture: $canCapture")
+
+                if (canCapture == true && recommendedMove != partialMove) {
+                    Log.d(TAG, "analyzeMoveScores: passed this point: canCapture $canCapture $recommendedMove $partialMove")
+                    category = "Miss"
+                }
+            }
+
+            val missedMate = mateInBefore in 1..3 && mateInAfter == 0 && partialMove != recommendedMove
+            Log.d(TAG, "analyzeMoveScores: missed mate is: $missedMate")
+
+            val tacticalMotifs = checkTactic(playerMove, firstBoard, currentPlayer)
+            Log.d(TAG, "analyzeMoveScores: tactics are: $tacticalMotifs")
+            tactics.add(tacticalMotifs)
+
+            if (tacticalMotifs.isNotEmpty()) {
                 category = "Brilliant"
             }
+
+            if (missedMate) {
+                category = "MissedMate" // or "Missed Mate" if you want a separate label
+                missedMates.add(
+                    MissedMate(
+                        move = partialMove,
+                        mateInBefore = mateInBefore,
+                        player = currentPlayer,
+                        moveObject = recommendedMoveObject
+                    )
+                )
+            } else {
+                missedMates.add(null)
+            }
+
+
+            val colorIndex = if (i % 2 == 0) 0 else 1
+            categoryCounts[category]?.let { it[colorIndex]++ }
+            moveCategories.add(category)
 
             // Log the analysis result
             Log.d("ChessAnalysis", "Move ${movesPlayed[i]}: $category (Loss: $loss, Delta: $delta)")
 
             // Store the evaluation from White's perspective
             evaluations.add(scoreAfterFromWhite)
+            applyMove(playerMove)
         }
 
-        // Calculate accuracies
         val scalingFactor = 100.0
         val whiteLosses = losses.filterIndexed { index, _ -> index % 2 == 0 }
         val blackLosses = losses.filterIndexed { index, _ -> index % 2 == 1 }
 
         val whiteAccuracy = if (whiteLosses.isNotEmpty()) {
-            whiteLosses.map { exp(-it.toDouble() / scalingFactor) }.average() * 100
+            whiteLosses.map { 1.0 / (1.0 + it.toDouble() / scalingFactor) }.average() * 100
         } else {
             0.0
         }
         val blackAccuracy = if (blackLosses.isNotEmpty()) {
-            blackLosses.map { exp(-it.toDouble() / scalingFactor) }.average() * 100
+            blackLosses.map { 1.0 / (1.0 + it.toDouble() / scalingFactor) }.average() * 100
         } else {
             0.0
         }
 
         val formattedWhiteAccuracy = String.format(Locale.US, "%.1f", whiteAccuracy).toDouble()
-        val formattedBlackAccuracy = String.format(Locale.US,"%.1f", blackAccuracy).toDouble()
+        val formattedBlackAccuracy = String.format(Locale.US, "%.1f", blackAccuracy).toDouble()
 
         val whiteCategoryCounts = categoryCounts.mapValues { it.value[0] }
         val blackCategoryCounts = categoryCounts.mapValues { it.value[1] }
 
-        Log.d(TAG, "analyzeMoveScores: black accuracy is $blackAccuracy, white accuracy is $whiteAccuracy")
+        Log.d(
+            TAG,
+            "analyzeMoveScores: black accuracy is $blackAccuracy, white accuracy is $whiteAccuracy bestMoves are $bestMoves"
+        )
+        Log.d(TAG, "analyzeMoveScores: capture opportunities are $captureOpportunities")
 
-        return AnalysisResult(evaluations, formattedWhiteAccuracy, formattedBlackAccuracy, whiteCategoryCounts, blackCategoryCounts)
+        return AnalysisResult(
+            evaluations,
+            formattedWhiteAccuracy,
+            formattedBlackAccuracy,
+            whiteCategoryCounts,
+            blackCategoryCounts,
+            moveCategories,
+            bestMoves,
+            captureOpportunities,
+            missedMates,
+            tactics
+        )
     }
 
-    suspend fun handleAIMove(player: Player, level: AILevel): Boolean = withContext(Dispatchers.IO) {
-        try {
-            // Create a snapshot of movesPlayed to avoid concurrent modification
-            val movesSnapshot = synchronized(movesPlayed) { movesPlayed.toMutableList() }
-            val movesString = convertMovesToNotation(movesSnapshot).joinToString(" ")
-            Log.d(TAG, "handleAIMove: movesByStockFish are: $movesString")
-            Log.d(TAG, "handleAIMove: movesPlayed snapshot: ${movesSnapshot.joinToString()}") // Avoid direct toString() on mutable collection
+    private fun checkTactic(move: Move, board: Board, player: Player): List<String> {
+        val recognizer = TacticsRecognizer(this)
+        val fork = recognizer.isFork(board, move, player)
+        val pin = recognizer.isPin(board, move, player)
+        val discovered = recognizer.isDiscoveredCheck(board, move, player)
 
-            // Send the position and start Stockfish thinking
-            stockfish.sendCommand("position startpos moves $movesString")
-            val skillLevel = if (level == AILevel.LEVEL1) 0 else 4
-            stockfish.setDifficultyLevel(skillLevel)
-            stockfish.sendCommand("go depth 1")
+        return listOfNotNull(fork, pin, discovered)
+    }
 
-            val bestMove = stockfish.getBestMove()
-            Log.d(TAG, "handleAIMove: moveByStockfish is $bestMove")
+    suspend fun handleAIMove(player: Player, level: AILevel): Boolean =
+        withContext(Dispatchers.IO) {
+            try {
+                // Create a snapshot of movesPlayed to avoid concurrent modification
+                val movesSnapshot = synchronized(movesPlayed) { movesPlayed.toMutableList() }
+                val movesString = convertMovesToNotation(movesSnapshot).joinToString(" ")
+                Log.d(TAG, "handleAIMove: movesByStockFish are: $movesString")
+                Log.d(
+                    TAG,
+                    "handleAIMove: movesPlayed snapshot: ${movesSnapshot.joinToString()}"
+                ) // Avoid direct toString() on mutable collection
 
-            run {
-                // Handle Stockfish move and update game state
-                val move = handleStockfishBestMove(bestMove, player)
-                if (move != null) {
-                    aiLastMove = move
-                    Log.d(TAG, "handleAIMove: aiLastMove: $aiLastMove")
-                    // Synchronize board modifications
-                    val moveSuccessful = synchronized(board) {
-                        makeMove(board, move, player) // Use a cloned board to avoid mid-operation changes
-                    }
-                    if (moveSuccessful) {
-                        aiStartPosition = move.from.position
-                        Log.d(TAG, "handleAIMove: aiStartPosition set to $aiStartPosition")
-                        Log.d(TAG, "handleAIMove: move successful")
+                // Send the position and start Stockfish thinking
+                stockfish.sendCommand("position startpos moves $movesString")
+                val skillLevel = if (level == AILevel.LEVEL1) 0 else 4
+                stockfish.setDifficultyLevel(skillLevel)
+                stockfish.sendCommand("go depth 1")
 
-                        // Check for winner and update turn safely
-                        synchronized(this@GamePlay) {
-                            checkForWinner(player)
-                            if (!isGameOver) {
-                                changeCurrentTurn()
-                                return@withContext true
+                val bestMove = stockfish.getBestMove()
+                Log.d(TAG, "handleAIMove: moveByStockfish is $bestMove")
+
+                run {
+                    // Handle Stockfish move and update game state
+                    val move = handleStockfishBestMove(bestMove, player)
+                    if (move != null) {
+                        aiLastMove = move
+                        Log.d(TAG, "handleAIMove: aiLastMove: $aiLastMove")
+                        // Synchronize board modifications
+                        val moveSuccessful = synchronized(board) {
+                            makeMove(
+                                board,
+                                move,
+                                player
+                            ) // Use a cloned board to avoid mid-operation changes
+                        }
+                        if (moveSuccessful) {
+                            aiStartPosition = move.from.position
+                            Log.d(TAG, "handleAIMove: aiStartPosition set to $aiStartPosition")
+                            Log.d(TAG, "handleAIMove: move successful")
+
+                            // Check for winner and update turn safely
+                            synchronized(this@GamePlay) {
+                                checkForWinner(player)
+                                if (!isGameOver) {
+                                    changeCurrentTurn()
+                                    return@withContext true
+                                }
+                                return@withContext false
                             }
+                        } else {
+                            Log.d(TAG, "handleAIMove: move failed")
                             return@withContext false
                         }
                     } else {
-                        Log.d(TAG, "handleAIMove: move failed")
+                        Log.d(TAG, "handleAIMove: no valid move parsed from Stockfish")
                         return@withContext false
                     }
-                } else {
-                    Log.d(TAG, "handleAIMove: no valid move parsed from Stockfish")
-                    return@withContext false
                 }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error in handleAIMove: ${e.message}", e)
+                return@withContext false
             }
-        } catch (e: Exception) {
-            Log.e(TAG, "Error in handleAIMove: ${e.message}", e)
-            return@withContext false
         }
-    }
+
     fun convertMovesToNotation(allMoves: MutableList<Move>): MutableList<String> {
         val moves = mutableListOf<String>()
         allMoves.forEach {
@@ -286,6 +512,7 @@ class GamePlay @Inject constructor(
                         else -> piece.vectorAsset to to
                     }
                 }
+
                 piece.vectorAsset == R.drawable.king_dark && from == "e8" -> {
                     when (to) {
                         "g8" -> null to "O-O"
@@ -293,10 +520,12 @@ class GamePlay @Inject constructor(
                         else -> piece.vectorAsset to to
                     }
                 }
+
                 piece.vectorAsset in listOf(R.drawable.pawn_white, R.drawable.pawn_dark) -> {
                     if (from[0] != to[0]) null to "${from[0]}x$to" // Capture or en passant
                     else null to to // Simple pawn move
                 }
+
                 else -> piece.vectorAsset to to // Other pieces (knight, bishop, etc.)
             }
 
@@ -407,11 +636,11 @@ class GamePlay @Inject constructor(
         return !isInCheckByOpponent
     }
 
-    private fun makeMove(myBoard: Board, move: Move, player: Player): Boolean {
-        Log.d(TAG, "makeMove: function running")
+    fun makeMove(myBoard: Board, move: Move, player: Player): Boolean {
+        Log.d(TAG, "makeMove: board state is ${myBoard.boxes}")
+        Log.d(TAG, "makeMove: move is $move current player is $player")
         //no piece available to move
         val sourcePiece = move.pieceMoved ?: return false
-
         // Valid player
         if (player != currentTurn.value) {
             Log.d(TAG, "makeMove: not players turn")
@@ -423,13 +652,14 @@ class GamePlay @Inject constructor(
             return false
         }
 
-        if (sourcePiece is Pawn && sourcePiece.isEnPassant(board, move.from, move.to)) {
+        if (sourcePiece is Pawn && sourcePiece.isEnPassant(myBoard, move.from, move.to)) {
             Log.d(TAG, "makeMove: isEnPassant")
             move.isEnPassant = true
             //perform enPassant
-            sourcePiece.performEnPassant(board, move.from, move.to)
+            sourcePiece.performEnPassant(myBoard, move.from, move.to)
             sourcePiece.hasMoved = true
             val destPiece = move.to.chessPiece
+
             if (destPiece != null) {
                 piecesKilled.add(destPiece)
             }
@@ -441,11 +671,11 @@ class GamePlay @Inject constructor(
         }
 
         // Check if the player is attempting castling
-        if (sourcePiece is King && sourcePiece.canCastle(move.from, move.to, board)) {
+        if (sourcePiece is King && sourcePiece.canCastle(move.from, move.to, myBoard)) {
             Log.d(TAG, "makeMove: castling can happen")
             move.isCastlingMove = true
             // Perform castling move
-            sourcePiece.castlingMove(move.from, move.to, board)
+            sourcePiece.castlingMove(move.from, move.to, myBoard)
             sourcePiece.hasMoved = true
 
             movesPlayed.add(move)
@@ -454,7 +684,8 @@ class GamePlay @Inject constructor(
         }
 
         //promotion for AI
-        if (promotionPieceFlow.value != null ) {
+        if (promotionPieceFlow.value != null) {
+            Log.d(TAG, "makeMove: promoting AI")
             move.from.chessPiece = null
             move.to.chessPiece = _promotionPieceFlow.value
             sourcePiece.hasMoved = true
@@ -465,9 +696,11 @@ class GamePlay @Inject constructor(
 
         //not a  Valid move
         if (!sourcePiece.canMove(myBoard, move.from, move.to)) {
-            Log.d(TAG, "makeMove: invalid move")
+            Log.d(TAG, "makeMove: myBoard is ${myBoard.boxes}")
+            Log.d(TAG, "makeMove: invalid move from ${move.from} to ${move.to}")
             return false
         }
+
         Log.d(TAG, "makeMove: no special move")
 
         // Kill?
@@ -580,7 +813,7 @@ class GamePlay @Inject constructor(
         return true
     }
 
-    private fun changeCurrentTurn() {
+    fun changeCurrentTurn() {
         // Set the current turn to the other player
         currentTurn.value = if (currentTurn.value == players[0]) {
             players[1]
@@ -590,7 +823,7 @@ class GamePlay @Inject constructor(
         Log.d(TAG, "changeCurrentTurn: current turn is ${currentTurn.value}")
     }
 
-    private fun getValidMoves(position: Position, player: Player): MutableList<Position> {
+    fun getValidMoves(position: Position, player: Player, board: Board): MutableList<Position> {
         val selectedSpot = board.getBox(position.row, position.column)
         val selectedPiece = selectedSpot.chessPiece
         val playerColor = if (player.isWhite) Color.WHITE else Color.BLACK
@@ -617,10 +850,10 @@ class GamePlay @Inject constructor(
         return validMovesForPiece
     }
 
-    fun getRemainingValidMoves(position: Position, player: Player): List<Position> {
+    fun getRemainingValidMoves(position: Position, player: Player, board: Board): List<Position> {
         val startSpot = board.getBox(position.row, position.column)
         val chessPiece = startSpot.chessPiece
-        val endPositions = getValidMoves(position, player)
+        val endPositions = getValidMoves(position, player, board)
         //Log.d(TAG, "before getRemainingValidMoves: all moves are $movesPlayed")
         val validPositions = mutableListOf<Position>()
 
@@ -680,7 +913,7 @@ class GamePlay @Inject constructor(
         currentTurn.value = player
         val opponent = if (player.isWhite) players[1] else players[0]
         for (piece in pieces) {
-            val positions = getValidMoves(piece.position, player)
+            val positions = getValidMoves(piece.position, player, board)
             for (position in positions) {
                 val move = Move(
                     board.getBox(piece.position.row, piece.position.column),
@@ -725,7 +958,7 @@ class GamePlay @Inject constructor(
         return null
     }
 
-    private fun getAlivePieces(player: Player, myBoard: Board): MutableList<ChessPiece> {
+    fun getAlivePieces(player: Player, myBoard: Board): MutableList<ChessPiece> {
         val availablePieces = mutableListOf<ChessPiece>()
         val playerColor = if (player.isWhite) Color.WHITE else Color.BLACK
         // Iterate through the board to find available pieces
@@ -751,7 +984,7 @@ class GamePlay @Inject constructor(
         val invalidPositions = mutableListOf<Position>()
         currentTurn.value = player
         for (piece in pieces) {
-            val validMoves = getValidMoves(piece.position, player)
+            val validMoves = getValidMoves(piece.position, player, board)
             for (position in validMoves) {
                 val move = Move(
                     board.getBox(piece.position.row, piece.position.column),
@@ -860,7 +1093,7 @@ class GamePlay @Inject constructor(
         currentTurn.value = player
     }
 
-    private fun undoMove(move: Move, myBoard: Board) {
+    fun undoMove(move: Move, myBoard: Board) {
         val startSpot = move.from
         val endSpot = move.to
 
@@ -931,13 +1164,16 @@ class GamePlay @Inject constructor(
             startSpot.chessPiece = move.pieceMoved
             // Restore any piece that was captured during the move
             endSpot.chessPiece = move.pieceKilled
-
+            board.getBox(startSpot.position.row, startSpot.position.column).chessPiece =
+                startSpot.chessPiece
+            board.getBox(endSpot.position.row, endSpot.position.column).chessPiece =
+                endSpot.chessPiece
             Log.d(TAG, "undoMove: piece removed is: $move")
             //movesPlayed.remove(move)
         }
     }
 
-    fun undoMoveByPlayer(move: Move) {
+    fun undoMoveByPlayer(move: Move, isReviewMode: Boolean = false) {
         val startSpot = move.from
         val endSpot = move.to
 
@@ -951,8 +1187,12 @@ class GamePlay @Inject constructor(
                 val rookEndColumn = startSpot.position.column + 1
                 val rookStartSpot = board.getBox(startSpot.position.row, rookStartColumn)
                 val rookEndSpot = board.getBox(startSpot.position.row, rookEndColumn)
-                Log.d(TAG, "undoMoveByPlayer: rook startSpot/endSpot is $rookStartSpot $rookEndSpot")
-                board.getBox(startSpot.position.row, rookStartColumn).chessPiece = rookEndSpot.chessPiece
+                Log.d(
+                    TAG,
+                    "undoMoveByPlayer: rook startSpot/endSpot is $rookStartSpot $rookEndSpot"
+                )
+                board.getBox(startSpot.position.row, rookStartColumn).chessPiece =
+                    rookEndSpot.chessPiece
                 rookEndSpot.chessPiece = null
 
                 //move the king back to its original position
@@ -981,8 +1221,10 @@ class GamePlay @Inject constructor(
                 kingEndSpot.chessPiece = null
             }
             move.isCastlingMove = false
-            movesUndone.add(move)
-            movesPlayed.remove(move)
+            if (!isReviewMode) {
+                movesUndone.add(move)
+                movesPlayed.remove(move)
+            }
         } else if (move.isEnPassant) {
             // Calculate the position of the captured pawn based on the end spot
             val capturedPawnPosition = Position(startSpot.position.row, endSpot.position.column)
@@ -1004,20 +1246,23 @@ class GamePlay @Inject constructor(
                 isKilled = false,
                 canEnPassant = true
             )
-            piecesKilled.remove(move.pieceKilled)
-            movesUndone.add(move)
-            movesPlayed.remove(move)
+            if (!isReviewMode) {
+                if (move.pieceKilled != null) piecesKilled.remove(move.pieceKilled)
+                movesUndone.add(move)
+                movesPlayed.remove(move)
+            }
         } else {
             // Restore the piece that was moved to its original position
             startSpot.chessPiece = move.pieceMoved
             // Restore any piece that was captured during the move
             endSpot.chessPiece = move.pieceKilled
 
-            if (move.pieceKilled != null) piecesKilled.remove(move.pieceKilled)
-
             Log.d(TAG, "undoMove: piece Moved From $endSpot to $startSpot")
-            movesUndone.add(move)
-            movesPlayed.remove(move)
+            if (!isReviewMode) {
+                if (move.pieceKilled != null) piecesKilled.remove(move.pieceKilled)
+                movesUndone.add(move)
+                movesPlayed.remove(move)
+            }
         }
     }
 

@@ -120,6 +120,7 @@ fun RootChessNavHost(
                 chessGameViewModel = viewModel,
                 onStartReview = {
                     navController.navigate(RootChessDestinations.REVIEW_GAME_ROUTE)
+                    viewModel.initReviewMode()
                 }
 
             )
@@ -128,7 +129,7 @@ fun RootChessNavHost(
             route = RootChessDestinations.REVIEW_GAME_ROUTE
         ) {
             BoardAnalysisScreen(
-                chessGameViewModel = viewModel
+                chessGameViewModel = viewModel,
             )
         }
     }

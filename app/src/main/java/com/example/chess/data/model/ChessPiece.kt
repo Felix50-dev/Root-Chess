@@ -18,6 +18,18 @@ sealed class ChessPiece(
     val value: Int = 0
 ) {
     abstract fun canMove(board: Board, start: Spot, end: Spot): Boolean
+
+    override fun toString(): String {
+        val pieceName = when (this) {
+            is Pawn -> "Pawn"
+            is Rook -> "Rook"
+            is Knight -> "Knight"
+            is Bishop -> "Bishop"
+            is Queen -> "Queen"
+            is King -> "King"
+        }
+        return "${color.name} $pieceName"
+    }
 }
 
 class Pawn(

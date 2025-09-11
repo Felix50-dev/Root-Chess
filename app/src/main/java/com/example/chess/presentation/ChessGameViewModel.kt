@@ -6,13 +6,13 @@ import android.media.SoundPool
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.chess.R
 import com.example.chess.data.model.AILevel
 import com.example.chess.data.model.AnalysisResult
 import com.example.chess.data.model.Board
 import com.example.chess.data.model.ChessPiece
 import com.example.chess.data.model.Color
+import com.example.chess.data.model.Feedback
 import com.example.chess.data.model.GameMode
 import com.example.chess.data.model.GameStatus
 import com.example.chess.data.model.Pawn
@@ -22,10 +22,12 @@ import com.example.chess.data.model.Position
 import com.example.chess.data.model.SANMovePair
 import com.example.chess.data.model.Spot
 import com.example.chess.data.repository.GamePlay
+import com.example.chess.data.repository.TacticsRecognizer
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -102,6 +104,20 @@ class ChessGameViewModel @Inject constructor(
     private val _analysisResult = MutableStateFlow<AnalysisResult?>(value = null)
     val analysisResult: StateFlow<AnalysisResult?> = _analysisResult.asStateFlow()
 
+    private val _currentMoveIndex = MutableStateFlow(0)
+    val currentMoveIndex: StateFlow<Int> = _currentMoveIndex.asStateFlow()
+    private val _currentMoveCategory = MutableStateFlow<String?>(null)
+    val currentMoveCategory: StateFlow<String?> = _currentMoveCategory.asStateFlow()
+    private var _movesToSimulate = emptyList<com.example.chess.data.model.Move>()
+    private var _movesToSimulateSAN = emptyList<String>()
+
+    private val _feedback = MutableStateFlow<Feedback?>(null)
+    val feedback: StateFlow<Feedback?> = _feedback.asStateFlow()
+
+    private var autoReviewJob: Job? = null
+    private val _isPlaying = MutableStateFlow(false)
+    val isPlaying: StateFlow<Boolean> = _isPlaying
+
 
     private var aiJob: Job? = null
 
@@ -130,6 +146,63 @@ class ChessGameViewModel @Inject constructor(
         captureSoundId = soundPool.load(context, R.raw.capture, 1)
     }
 
+    private fun generateExplanation(
+        type: String,
+        bestMove: String?,
+        chessPiece: String,
+        numOfMoves: Int? = 0,
+        matingPiece: ChessPiece?,
+        tactic: List<String>? = null
+    ): String {
+        Log.d(TAG, "generateExplanation: move category is $type")
+        return when (type) {
+            "Best" -> "This is the optimal move in this position."
+            "Great" -> "This is a solid move that maintains your position."
+            "Inaccurate" -> "This move is slightly suboptimal. Consider $bestMove."
+            "Miss" -> "You missed a material advantage by capturing $chessPiece at $bestMove ."
+            "MissedMate" -> "You missed a mate in $numOfMoves move(s) by moving $matingPiece to ${
+                bestMove?.takeLast(
+                    2
+                )
+            }."
+
+            "Mistake" -> "This move weakens your position. Better was $bestMove."
+            "Blunder" -> "This move loses material or position. Better was $bestMove."
+            "Brilliant" -> "This move is exceptionally good, a $tactic in chess."
+            "Fork" -> "This move attacks two or more valuable enemy pieces at once — a fork!"
+            "Pin" -> "This move pins an enemy piece to a more valuable one, such as their king or queen."
+            "Discovered Attack" -> "This move reveals an attack by another piece — a powerful discovered tactic!"
+            "Double Check" -> "A rare double check! Two pieces are attacking the king simultaneously."
+            "Skewer" -> "A skewer tactic! The more valuable piece must move, exposing a weaker one."
+            else -> "Move analysis."
+        }
+    }
+
+    // Example usage after analyzing a move
+    private fun createFeedbackForMove(
+        move: String,
+        category: String,
+        bestMove: String?,
+        chessPiece: String,
+        mateIn: Int?,
+        matingPiece: ChessPiece?,
+        tactic: List<String>? = null
+    ): Feedback {
+        val explanation = generateExplanation(category, bestMove, chessPiece, mateIn, matingPiece, tactic)
+        val feedback = Feedback(
+            move = move,
+            type = category,
+            explanation = explanation,
+            bestMove = if (category in listOf(
+                    "Inaccurate",
+                    "Mistake",
+                    "Blunder",
+                )
+            ) bestMove else null
+        )
+        Log.d(TAG, "createFeedbackForMove: move feedback is $feedback")
+        return feedback
+    }
 
     fun setGameMode(gameMode: GameMode) {
         viewModelScope.launch {
@@ -137,7 +210,8 @@ class ChessGameViewModel @Inject constructor(
             if (gameMode == GameMode.FRIEND) {
                 playerWhite.playerType = PlayerType.HUMAN
                 playerDark.playerType = PlayerType.HUMAN
-                game.init(playerWhite, playerDark)
+                game.init(playerWhite, playerDark, true)
+                game.movesPlayed.clear()
                 _boardState.value =
                     BoardState(game.board, game.currentTurn.value, game.status, null)
             } else {
@@ -163,7 +237,7 @@ class ChessGameViewModel @Inject constructor(
                 playerWhite.playerType = PlayerType.AI
                 playerDark.playerType = PlayerType.HUMAN
             }
-            game.init(playerWhite, playerDark)
+            game.init(playerWhite, playerDark, true)
         }
 
         _boardState.value =
@@ -246,12 +320,12 @@ class ChessGameViewModel @Inject constructor(
 
     fun startNewGame() {
         viewModelScope.launch {
-            game.init(playerWhite, playerDark)
-            game.isGameOver = false
+            game.init(playerWhite, playerDark, true)
+//            game.isGameOver = false
             game.movesPlayed.clear()
             _movesMade.value = emptyList<String>().toMutableList()
             _movesMadeSAN.value = emptyList<SANMovePair>().toMutableList()
-            game.piecesKilled.clear()
+            //game.piecesKilled.clear()
             _piecesKilled.value = emptyList<ChessPiece>().toMutableList()
             _selectedPiecePosition.value = null
             _boardState.value.gameStatus = GameStatus.ACTIVE
@@ -299,7 +373,7 @@ class ChessGameViewModel @Inject constructor(
         }
     }
 
-    private fun checkForPawnPromotion(targetSpot: Spot) {
+    fun checkForPawnPromotion(targetSpot: Spot) {
         val piece = targetSpot.chessPiece
         if (piece is Pawn && ((piece.color == Color.WHITE && targetSpot.position.row == 0) || (piece.color == Color.BLACK && targetSpot.position.row == 7))
         ) {
@@ -345,22 +419,29 @@ class ChessGameViewModel @Inject constructor(
         _validMoves.value = game.currentTurn.value?.let {
             game.getRemainingValidMoves(
                 position,
-                it
+                it,
+                game.board
             )
         }!!
     }
 
-    private fun playerMove(start: Spot, end: Spot): Boolean {
+    private fun playerMove(start: Spot, end: Spot, isReviewMode: Boolean = false): Boolean {
         var playerMove = false
         viewModelScope.launch {
-            playerMove = game.currentTurn.value?.let { makeMove(it, start, end) } == true
+            Log.d(TAG, "playerMove: current is ${game.currentTurn.value!!}")
+            playerMove = makeMove(game.currentTurn.value!!, start, end, game.board, isReviewMode)
         }
         return playerMove
     }
 
-    private fun makeMove(player: Player, start: Spot, end: Spot): Boolean {
-        // Handle the human player's move synchronously
-        val value = game.handleHumanMove(player, start, end)
+    private fun makeMove(
+        player: Player,
+        start: Spot,
+        end: Spot,
+        board: Board,
+        isReviewMode: Boolean = false
+    ): Boolean {
+        val value = game.handleHumanMove(player, start, end, isReviewMode, board)
         val isCaptureMove = end.chessPiece != null
         checkForPawnPromotion(end)
         _piecesKilled.value = game.piecesKilled.toMutableList()
@@ -368,7 +449,6 @@ class ChessGameViewModel @Inject constructor(
         Log.d(TAG, "makeMove: movesMade are: ${_movesMade.value}")
         _movesMadeSAN.value = game.convertMovesToSANNotation(game.movesPlayed)
         Log.d(TAG, "makeMove: SAN are: ${_movesMadeSAN.value}")
-        Log.d(TAG, "makeMove: ${_piecesKilled.value}")
         _boardState.value = _boardState.value.copy(
             board = game.board,
             currentPlayer = game.currentTurn.value,
@@ -376,14 +456,167 @@ class ChessGameViewModel @Inject constructor(
             lastMovedFrom = start.position
         )
         _lastMove.value = Move(start.position, end.position)
-        Log.d(TAG, "makeMove last move is: ${_lastMove.value}")
         Log.d(TAG, "makeMove last move is: ${_boardState.value.lastMovedFrom}")
-        // Check for pawn promotion after move
         checkForPawnPromotion(end)
 
         if (isCaptureMove) soundPool.play(captureSoundId, 0.5f, 0.5f, 1, 0, 1f) else
             soundPool.play(moveSoundId, 0.5f, 0.5f, 1, 0, 1f)
         return value
+    }
+
+    fun initReviewMode() {
+        _movesToSimulate = game.movesPlayed.toMutableList()
+        _movesToSimulateSAN = game.convertMovesToNotation(game.movesPlayed)
+        Log.d(TAG, "reviewGame: movesToSimulateSAN are $_movesToSimulateSAN")
+        if (playerWhite.playerType == PlayerType.AI) {
+            playerWhite.playerType = PlayerType.HUMAN
+        }
+        if (playerDark.playerType == PlayerType.AI) {
+            playerDark.playerType = PlayerType.HUMAN
+        }
+        Log.d(TAG, "reviewGame: moves to simulate are: $_movesToSimulate")
+        game.init(playerWhite, playerDark, true)
+        _movesMade.value = emptyList<String>().toMutableList()
+        _currentMoveIndex.value = 0
+        _currentMoveCategory.value = null
+    }
+
+    fun nextMove(isReviewMode: Boolean = false) {
+        if (_currentMoveIndex.value < _movesToSimulate.size) {
+            if (_currentMoveIndex.value == 0) game.currentTurn.value = playerWhite
+            val move = _movesToSimulate[_currentMoveIndex.value]
+            val tactic = _analysisResult.value?.tactics?.getOrNull(_currentMoveIndex.value)
+            Log.d(TAG, "nextMove: current move is $move tactic is $tactic")
+            if (!isReviewMode) {
+                move.from.chessPiece = move.to.chessPiece
+                move.to.chessPiece =
+                    game.board.getBox(move.to.position.row, move.from.position.column).chessPiece
+            }
+            playerMove(move.from, move.to, true)
+            Log.d(TAG, "nextMove: current move is $move")
+            Log.d(TAG, "previousMove: board has ${game.board.getBox(5, 5)}")
+            val sanMove = _movesToSimulateSAN[_currentMoveIndex.value]
+            val category = _analysisResult.value?.moveCategories?.getOrNull(_currentMoveIndex.value)
+            val bestMove = _analysisResult.value?.bestMoves?.getOrNull(_currentMoveIndex.value)
+            val captureOpportunity =
+                _analysisResult.value?.captureOpportunity?.getOrNull(_currentMoveIndex.value)
+            val missedMate = _analysisResult.value?.missedMates?.getOrNull(_currentMoveIndex.value)
+            if (tactic?.isNotEmpty() == true) {
+                _feedback.value = createFeedbackForMove(
+                    sanMove,
+                    category.toString(),
+                    bestMove,
+                    captureOpportunity?.target.toString(),
+                    missedMate?.mateInBefore,
+                    missedMate?.moveObject?.pieceMoved,
+                    tactic
+                )
+            } else {
+                _feedback.value = createFeedbackForMove(
+                    sanMove,
+                    category.toString(),
+                    bestMove,
+                    captureOpportunity?.target.toString(),
+                    missedMate?.mateInBefore,
+                    missedMate?.moveObject?.pieceMoved,
+                    tactic
+                )
+            }
+            _currentMoveIndex.value++
+            _currentMoveCategory.value =
+                analysisResult.value?.moveCategories?.getOrNull(_currentMoveIndex.value - 1)
+            Log.d(
+                TAG,
+                "nextMove: Move ${_currentMoveIndex.value} made: $move, category: ${_currentMoveCategory.value}"
+            )
+            _boardState.value = _boardState.value.copy(
+                board = game.board,
+                currentPlayer = game.currentTurn.value,
+                gameStatus = game.status,
+            )
+        } else {
+            Log.e(TAG, "nextMove: No more moves to simulate")
+        }
+    }
+
+    fun previousMove() {
+        if (_currentMoveIndex.value > 0 && !_isPlaying.value) {
+            val prevIndex = _currentMoveIndex.value - 1
+            val move = _movesToSimulate[prevIndex]
+
+            Log.d(TAG, "previousMove: reverting move at index $prevIndex: $move")
+            move.to.chessPiece = move.from.chessPiece
+            move.from.chessPiece = null
+            game.undoMove(move, game.board)
+
+            val tactic = _analysisResult.value?.tactics?.getOrNull(_currentMoveIndex.value)
+            val sanMove = _movesToSimulateSAN[prevIndex]
+            val category = _analysisResult.value?.moveCategories?.getOrNull(prevIndex)
+            val bestMove = _analysisResult.value?.bestMoves?.getOrNull(prevIndex)
+            val captureOpportunity = _analysisResult.value?.captureOpportunity?.getOrNull(prevIndex)
+            val missedMate = _analysisResult.value?.missedMates?.getOrNull(prevIndex)?.mateInBefore
+            val matingPiece =
+                _analysisResult.value?.missedMates?.getOrNull(prevIndex)?.moveObject?.pieceMoved
+            _feedback.value = createFeedbackForMove(
+                sanMove,
+                category.toString(),
+                bestMove,
+                captureOpportunity?.target.toString(),
+                missedMate,
+                matingPiece,
+                tactic
+            )
+            _currentMoveCategory.value = category
+
+            _currentMoveIndex.value = prevIndex
+
+            _boardState.value = _boardState.value.copy(
+                board = game.board.clone(),
+                currentPlayer = game.currentTurn.value,
+                gameStatus = game.status,
+            )
+            game.changeCurrentTurn()
+        } else {
+            Log.e(TAG, "previousMove: Cannot revert move (either index too low or playing)")
+        }
+    }
+
+
+    fun startAutoReview() {
+        autoReviewJob?.cancel()
+        _isPlaying.value = true
+        autoReviewJob = viewModelScope.launch {
+            while (_currentMoveIndex.value < _movesToSimulate.size) {
+                if (!_isPlaying.value) break
+
+                Log.d(
+                    TAG,
+                    "startAutoReview: index is ${_currentMoveIndex.value} total size is ${_movesToSimulate.size}"
+                )
+                Log.d(TAG, "startAutoReview: current turn is ${game.currentTurn.value}")
+
+                nextMove()
+                val delayTime = if (_currentMoveCategory.value in listOf(
+                        "Brilliant",
+                        "Mistake",
+                        "Blunder"
+                    )
+                ) 5000L else 3000L
+                delay(delayTime)
+            }
+            _isPlaying.value = false
+            Log.d(TAG, "startAutoReview: boardState is ${game.board.boxes}")
+        }
+    }
+
+
+    fun onPlayPause() {
+        if (_isPlaying.value) {
+            _isPlaying.value = false
+            autoReviewJob?.cancel()
+        } else {
+            startAutoReview()
+        }
     }
 
     fun undoMove() {

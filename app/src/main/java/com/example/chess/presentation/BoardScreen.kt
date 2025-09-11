@@ -429,7 +429,7 @@ fun ChessGrid(
     piecesKilled: MutableList<ChessPiece>,
     movesMadeSan: MutableList<SANMovePair>,
     showPromotionDialog: Boolean,
-    aiLastMove: Move?
+    aiLastMove: Move?,
 ) {
     val blackPiecesKilled = piecesKilled.filter {
         it.color == com.example.chess.data.model.Color.BLACK
