@@ -1,0 +1,3 @@
+## 2024-05-24 - [Optimizing Object Cloning and Board Validation]
+**Learning:** The Chess Piece and Board cloning logic was a significant bottleneck. Initializing a new Board triggered a full `resetBoard()` call (64 object allocations) before the cloned state was even applied. Additionally, `isValidPosition` was performing an O(N²) scan of the board for a simple boundary check.
+**Action:** Refactored `Board` to accept an optional `boxes` parameter in the primary constructor. This allows `clone()` to pass the new state immediately, bypassing redundant initialization. Replaced board scans with O(1) coordinate boundary checks.
