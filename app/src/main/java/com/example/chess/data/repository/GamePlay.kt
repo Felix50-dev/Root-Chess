@@ -710,38 +710,26 @@ class GamePlay @Inject constructor(
 
 
     fun findKing(myBoard: Board, playerColor: Color): Spot? {
-        // Iterate through the board to find the king spot of the specified color
-        for (row in 0 until Board.NUM_ROWS) {
-            for (col in 0 until Board.NUM_COLUMNS) {
-                val spot = myBoard.getBox(row, col)
+        // Efficient piece scanning by accessing boxes directly
+        myBoard.boxes.forEach { row ->
+            row.forEach { spot ->
                 val piece = spot.chessPiece
-                if (piece != null && piece is King) {
-                    if (piece.color == playerColor) {
-                        return spot
-                    } // Found the king spot
+                if (piece is King && piece.color == playerColor) {
+                    return spot
                 }
             }
         }
         return null
     }
 
-    private fun getAlivePieces(player: Player, myBoard: Board): MutableList<ChessPiece> {
-        val availablePieces = mutableListOf<ChessPiece>()
+    private fun getAlivePieces(player: Player, myBoard: Board): List<ChessPiece> {
         val playerColor = if (player.isWhite) Color.WHITE else Color.BLACK
-        // Iterate through the board to find available pieces
-        for (row in 0 until 8) {
-            for (col in 0 until 8) {
-                if (myBoard.getBox(row, col).chessPiece != null) {
-                    if (playerColor == myBoard.getBox(row, col).chessPiece!!.color) {
-                        val chessPiece = myBoard.getBox(row, col).chessPiece
-                        val chessPiecePosition = Position(row, col)
-                        chessPiece!!.position = chessPiecePosition
-                        availablePieces += chessPiece
-                    }
-                }
+        // Optimized piece retrieval using flatMap and filter to minimize overhead
+        return myBoard.boxes.flatMap { row ->
+            row.mapNotNull { spot ->
+                spot.chessPiece?.takeIf { it.color == playerColor }
             }
         }
-        return availablePieces
     }
 
     private fun isStalemate(player: Player, board: Board): Boolean {
