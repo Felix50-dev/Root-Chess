@@ -263,7 +263,7 @@ class GamePlay @Inject constructor(
         val toBox = board.getBox(toRow, toCol)
         Log.d(TAG, "convertToMoveObject: to: $toBox")
         val pieceMoved = fromBox.chessPiece
-        val pieceKilled = toBox.chessPiece
+        var pieceKilled = toBox.chessPiece
         Log.d(TAG, "convertToMoveObject: piece is $pieceMoved")
         Log.d(TAG, "convertToMoveObject: piece is $pieceKilled")
         var promotionPiece: ChessPiece? = null
@@ -281,28 +281,74 @@ class GamePlay @Inject constructor(
 
         _promotionPieceFlow.value = promotionPiece
 
+        // A king moving two squares horizontally is, by the rules this engine enforces
+        // elsewhere (King.canMove), only ever possible via castling.
+        val isCastlingMove = pieceMoved is King && fromRow == toRow && abs(toCol - fromCol) == 2
+
+        // The captured pawn sits beside the mover (same row as `from`, same column as
+        // `to`), not on `to` — override pieceKilled to point at it instead of the
+        // (empty) destination square.
+        val isEnPassant = pieceMoved is Pawn && pieceMoved.isEnPassant(board, fromBox, toBox)
+        if (isEnPassant) {
+            pieceKilled = board.getBox(fromRow, toCol).chessPiece
+        }
+
         return Move(
             from = fromBox,
             to = toBox,
             player = player,
             pieceMoved = pieceMoved,
-            pieceKilled = pieceKilled
+            pieceKilled = pieceKilled,
+            isCastlingMove = isCastlingMove,
+            promotionPiece = promotionPiece,
+            isEnPassant = isEnPassant
         )
     }
 
-    private fun applyMove(move: Move) {
+    // Replays a historical move onto an isolated analysis board (never the live game
+    // board/state — no movesPlayed/piecesKilled/currentTurn bookkeeping here). Unlike the
+    // old version, this correctly handles castling (moves the rook too), en passant
+    // (removes the captured pawn from beside the destination, not the destination itself),
+    // and promotion (places the promoted piece, not the original pawn) — previously any
+    // game containing one of these silently corrupted the rest of the analysis replay.
+    fun applyMove(move: Move, replayBoard: Board) {
+        val piece = move.pieceMoved ?: return
         val fromBox = move.from
         val toBox = move.to
 
-        // Clear origin
-        fromBox.chessPiece = null
+        when {
+            move.isEnPassant && piece is Pawn -> {
+                piece.performEnPassant(replayBoard, fromBox, toBox)
+                replayBoard.enPassantTarget = null
+            }
 
-        // Place piece on destination (or promoted piece)
-        val pieceToPlace = move.pieceMoved
-        toBox.chessPiece = pieceToPlace
+            move.isCastlingMove && piece is King -> {
+                piece.castlingMove(fromBox, toBox, replayBoard)
+                replayBoard.enPassantTarget = null
+            }
 
-        // Update piece position
-        pieceToPlace?.position = toBox.position
+            move.promotionPiece != null -> {
+                move.promotionPiece?.position = toBox.position
+                toBox.chessPiece = move.promotionPiece
+                fromBox.chessPiece = null
+                replayBoard.enPassantTarget = null
+            }
+
+            else -> {
+                toBox.chessPiece = piece
+                fromBox.chessPiece = null
+                piece.position = toBox.position
+                replayBoard.enPassantTarget =
+                    if (piece is Pawn && abs(toBox.position.row - fromBox.position.row) == 2) {
+                        Position(
+                            (fromBox.position.row + toBox.position.row) / 2,
+                            fromBox.position.column
+                        )
+                    } else {
+                        null
+                    }
+            }
+        }
 
         Log.d(TAG, "applyMove: applied move $move")
     }
@@ -718,7 +764,7 @@ class GamePlay @Inject constructor(
         )
         if (tactics.isNotEmpty()) category = "Brilliant"
 
-        applyMove(playerMoveObject)
+        applyMove(playerMoveObject, firstBoard)
 
         return SingleMoveResult(
             category = category,
