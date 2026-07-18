@@ -26,8 +26,8 @@ class GamePlayTest {
         whitePlayer = Player(true, PlayerType.HUMAN)
         blackPlayer = Player(false, PlayerType.HUMAN)
 
-        board.getBox(5, 2).chessPiece = Knight(color = Color.WHITE, position = Position(5,2), isKilled = false)
-        board.getBox(7,1).chessPiece = null
+        board.getBox(7, 1).chessPiece = Knight(color = Color.WHITE, position = Position(7,1), isKilled = false)
+        board.getBox(5,2).chessPiece = null
 
         board.getBox(5,5).chessPiece = Queen(color = Color.WHITE, position = Position(5,5), isKilled = false)
         board.getBox(1,5).chessPiece = Pawn(color = Color.BLACK, position = Position(1,5), isKilled = false)
@@ -35,7 +35,7 @@ class GamePlayTest {
 
     @Test
     fun testConvertToMoveObjectForNormalMove() {
-        val moveStr = "e2e4" // Pawn from e2 to e4
+        val moveStr = "b1c3" // Knight from b1 to c3
         val stockfish = StockfishEngine()
         val game = GamePlay(board, stockfish)
         val move = game.convertToMoveObject(moveStr, board, whitePlayer)
@@ -69,8 +69,8 @@ class GamePlayTest {
         val game = GamePlay(board, stockfish)
         val move = game.convertToMoveObject(moveStr, board, whitePlayer)
 
-        assertEquals("", move.from.position.toString())
-        assertEquals("e8", move.to.position.toString())
+        assertEquals("e7", move.from.position.toAlgebraicNotation())
+        assertEquals("e8", move.to.position.toAlgebraicNotation())
         assertTrue(move.pieceMoved is Pawn)
         assertEquals(Color.WHITE, move.pieceMoved?.color)
         assertTrue("_promotionPieceFlow should emit Queen", game._promotionPieceFlow.value is Queen)

@@ -3,13 +3,15 @@ package com.example.chess.data
 import android.util.Log
 import com.example.chess.domain.model.EvalParseState
 import com.example.chess.domain.model.PositionEval
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import java.io.BufferedReader
 import java.io.BufferedWriter
 import java.io.File
@@ -30,6 +32,12 @@ class StockfishEngine {
     // internal (not private) so tests can inject a fake reader without a real engine process.
     internal var reader: BufferedReader? = null
 
+    // Read loops run here, detached from the calling coroutine. withTimeout/withTimeoutOrNull
+    // cannot interrupt a blocking BufferedReader.readLine() call — coroutine cancellation is
+    // cooperative and a plain blocking read never checks for it — so a read job started on this
+    // scope keeps running (and is abandoned) even after the caller times out and returns.
+    private var ioScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
     private val _bestMoveFlow = MutableStateFlow("")
     val bestMoveFlow: StateFlow<String> = _bestMoveFlow.asStateFlow()
 
@@ -49,69 +57,68 @@ class StockfishEngine {
 
     suspend fun getBestMove(): String {
         val activeReader = reader ?: return ""
+        var bestMove = ""
 
-        return try {
-            withTimeout(STOCKFISH_READ_TIMEOUT_MS) {
-                withContext(Dispatchers.IO) {
-                    var line: String?
-                    var evaluation: Int?
-                    var bestMove = ""
-                    while (activeReader.readLine().also { line = it } != null) {
-                        Log.d("Stockfish", "Stockfish Output: $line")
-
-                        // Extract evaluation score
-                        if (line!!.startsWith("info depth")) {
-                            val match = Regex("score cp (-?\\d+)").find(line!!)
-                            if (match != null) {
-                                evaluation = match.groupValues[1].toInt()
-                                Log.d("Stockfish", "Evaluation: $evaluation")
-                            }
-                        }
-
-                        if (line!!.startsWith("bestmove")) {
-                            bestMove = line!!.split(" ")[1]
-                            break
-                        }
-                    }
-                    bestMove
+        awaitReadOrAbandon(activeReader) {
+            var line: String?
+            while (activeReader.readLine().also { line = it } != null) {
+                Log.d("Stockfish", "Stockfish Output: $line")
+                if (line!!.startsWith("bestmove")) {
+                    bestMove = line!!.split(" ")[1]
+                    break
                 }
             }
-        } catch (e: TimeoutCancellationException) {
-            Log.e(
-                "Stockfish",
-                "getBestMove timed out after ${STOCKFISH_READ_TIMEOUT_MS}ms — engine may be wedged"
-            )
-            ""
-        } catch (e: IOException) {
-            Log.e("Stockfish", "getBestMove IO error: ${e.message}", e)
-            ""
         }
+
+        return bestMove
     }
 
     suspend fun getDetailedEval(): PositionEval {
         val activeReader = reader ?: return PositionEval(0, "", 0, emptyList(), 0)
         val state = EvalParseState()
 
-        try {
-            withTimeout(STOCKFISH_READ_TIMEOUT_MS) {
-                withContext(Dispatchers.IO) {
-                    var line: String?
-                    while (activeReader.readLine().also { line = it } != null) {
-                        parseLine(line!!, state)       // ← parse as it streams, no list
-                        if (state.done) break          // ← stop immediately on bestmove
-                    }
-                }
+        awaitReadOrAbandon(activeReader) {
+            var line: String?
+            while (activeReader.readLine().also { line = it } != null) {
+                parseLine(line!!, state)       // ← parse as it streams, no list
+                if (state.done) break          // ← stop immediately on bestmove
             }
-        } catch (e: TimeoutCancellationException) {
-            Log.e(
-                "Stockfish",
-                "getDetailedEval timed out after ${STOCKFISH_READ_TIMEOUT_MS}ms — engine may be wedged"
-            )
-        } catch (e: IOException) {
-            Log.e("Stockfish", "getDetailedEval IO error: ${e.message}", e)
         }
 
         return PositionEval(state.score, state.bestMove, state.mateIn, state.pv, state.depth)
+    }
+
+    // Runs `readLoop` (a blocking readLine() loop) on `ioScope` and waits up to
+    // STOCKFISH_READ_TIMEOUT_MS for it. If it doesn't finish in time, we give up waiting —
+    // withTimeoutOrNull only stops US, it doesn't stop the still-running read job, since a
+    // blocking readLine() call never reaches a cancellation checkpoint. We still try to tear
+    // the connection down so the abandoned job eventually unblocks: destroying the process is
+    // the reliable path for a real engine (kills the pipe from the other end, so the pending
+    // read gets EOF); closing our own reader is best-effort only, and MUST happen off this
+    // thread — verified empirically that BufferedReader/InputStreamReader.close() shares a lock
+    // with read(), so calling it here while the abandoned job is still parked inside readLine()
+    // would itself block this thread until that read unblocks, i.e. forever. Either way, this
+    // function returns on time; the abandoned job cleans itself up whenever (if ever) it does.
+    private suspend fun awaitReadOrAbandon(activeReader: BufferedReader, readLoop: () -> Unit) {
+        val readJob = ioScope.launch {
+            try {
+                readLoop()
+            } catch (e: IOException) {
+                Log.e("Stockfish", "Stockfish read IO error: ${e.message}", e)
+            }
+        }
+
+        val completed = withTimeoutOrNull(STOCKFISH_READ_TIMEOUT_MS) { readJob.join() } != null
+        if (!completed) {
+            Log.e(
+                "Stockfish",
+                "Stockfish read timed out after ${STOCKFISH_READ_TIMEOUT_MS}ms — engine appears wedged, tearing down connection"
+            )
+            process?.destroy()
+            reader = null
+            ioScope.launch { runCatching { activeReader.close() } }
+            readJob.cancel()
+        }
     }
 
     fun parseLine(line: String, state: EvalParseState) {
@@ -175,6 +182,8 @@ class StockfishEngine {
             Log.e("Stockfish", "Error closing reader: ${e.message}")
         }
         reader = null
+        ioScope.cancel()
+        ioScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     }
 }
 
