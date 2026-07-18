@@ -2,6 +2,7 @@ package com.example.chess.data.repository
 
 import com.example.chess.data.remote.GeminiApi
 import com.example.chess.domain.model.MoveExplanationRequest
+import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -9,7 +10,9 @@ import javax.inject.Singleton
 class MoveExplainer @Inject constructor(
     private val geminiApi: GeminiApi
 ) {
-    private val explanationCache = mutableMapOf<String, String>()
+    // Singleton-scoped and explain() can be invoked concurrently (e.g. rapidly stepping
+    // through review moves each launches its own coroutine) — must be thread-safe.
+    private val explanationCache = ConcurrentHashMap<String, String>()
 
     suspend fun explain(request: MoveExplanationRequest): String {
         val cacheKey = "${request.movePlayed}_${request.type}_${request.pgn.length}"
@@ -21,7 +24,7 @@ class MoveExplainer @Inject constructor(
         return explanation
     }
 
-    // Fallback for when Claude is unavailable
+    // Fallback for when the Gemini API is unavailable
     fun explainFallback(request: MoveExplanationRequest): String {
         return when (request.type) {
             "Best" -> "This is the optimal move in this position."

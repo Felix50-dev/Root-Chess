@@ -33,6 +33,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
+import java.util.Collections
 import java.util.Locale
 import javax.inject.Inject
 import kotlin.math.abs
@@ -47,9 +48,13 @@ class GamePlay @Inject constructor(
     val currentTurn = MutableStateFlow<Player?>(null)
     var status: GameStatus = GameStatus.ACTIVE
     var isGameOver: Boolean = false
-    val movesPlayed: MutableList<Move> = mutableListOf()
-    val movesUndone: MutableList<Move> = mutableListOf()
-    val piecesKilled: MutableList<ChessPiece> = mutableListOf()
+    // Mutated from Dispatchers.Default (AI move handling) and read from the Main thread
+    // (ViewModel sync). synchronizedList makes individual add/remove/clear/etc. calls
+    // thread-safe by default — callers still need `synchronized(list) { ... }` around any
+    // compound operation (snapshotting/iterating), same as the Java docs require.
+    val movesPlayed: MutableList<Move> = Collections.synchronizedList(mutableListOf())
+    val movesUndone: MutableList<Move> = Collections.synchronizedList(mutableListOf())
+    val piecesKilled: MutableList<ChessPiece> = Collections.synchronizedList(mutableListOf())
     lateinit var aiStartPosition: Position
 
     // StateFlow for the promotion piece
@@ -123,14 +128,13 @@ class GamePlay @Inject constructor(
             Move(startBox, endBox, player, start.chessPiece)
         }
         Log.d(TAG, "handleHumanMove reached this point: $move")
-        val playerColor = if (player.isWhite) Color.WHITE else Color.BLACK
 
         // Make the move
         if (currentTurn.value?.playerType == PlayerType.HUMAN && makeMove(board, move, player)) {
             Log.d(TAG, "handleHumanMove: passed this point")
             Log.d(TAG, "handleHumanMove: move made is $move board state is ${board.boxes}")
             // Validate the move
-            if (isMoveValid(player, playerColor)) {
+            if (isMoveValid(player)) {
                 checkForWinner(player)
                 if (isReviewMode) {
                     changeCurrentTurn()
@@ -1134,20 +1138,10 @@ class GamePlay @Inject constructor(
     }
 
 
-    private fun isMoveValid(player: Player, playerColor: Color): Boolean {
-        // Check if the player's king is in check after making the move
-        val kingPositionAfterMove = findKing(board, playerColor)?.position
-        val isInCheckAfterMove = kingPositionAfterMove != null && detectCheck(player)
-
-        // If the move leaves the player in check, revert it
-        if (isInCheckAfterMove) {
-            return false
-        }
-
-        // Check if the move would put the player in check by the opponent
-        val isInCheckByOpponent = detectCheck(player)
-        return !isInCheckByOpponent
-    }
+    // A move is valid exactly when it doesn't leave the mover's own king in check —
+    // this used to compute detectCheck(player) twice (once guarded by a redundant
+    // findKing() null-check that detectCheck() already performs internally).
+    private fun isMoveValid(player: Player): Boolean = !detectCheck(player)
 
     private fun makeMove(myBoard: Board, move: Move, player: Player): Boolean {
         val sourcePiece = move.pieceMoved ?: return false
@@ -1243,13 +1237,6 @@ class GamePlay @Inject constructor(
     private fun checkForWinner(player: Player) {
         val opponent = if (player.isWhite) players[1] else players[0]
 
-        //Check for check and checkmate
-        if (player.isWhite) {
-            findKing(board, Color.WHITE)
-        } else {
-            findKing(board, Color.BLACK)
-        }
-
         if (detectCheck(opponent)) {
             status = if (detectCheckMate(opponent)) {
                 // Set game status to opponent win
@@ -1293,9 +1280,16 @@ class GamePlay @Inject constructor(
         }
 
         if (sourcePiece is Pawn && sourcePiece.isEnPassant(board, move.from, move.to)) {
+            // The captured pawn sits beside the mover, not on `move.to` — same as makeMove().
+            val capturedPawn =
+                board.getBox(move.from.position.row, move.to.position.column).chessPiece
             //perform enPassant
             sourcePiece.performEnPassant(board, move.from, move.to)
             move.isEnPassant = true
+            if (capturedPawn != null) {
+                capturedPawn.isKilled = true
+                move.pieceKilled = capturedPawn
+            }
             //movesPlayed.add(move)
 
             return true
@@ -1587,14 +1581,12 @@ class GamePlay @Inject constructor(
             startSpot.chessPiece = endSpot.chessPiece
             endSpot.chessPiece = null
 
+            // Restore the actual captured pawn (identity preserved — used elsewhere e.g.
+            // for animation matching), falling back to fabricating one only in the
+            // unlikely case pieceKilled wasn't captured (e.g. a hand-built Move).
             val opponentColor = if (move.player.isWhite) Color.BLACK else Color.WHITE
-
-            // Restore the captured pawn to its original position
-            capturedPawnSpot.chessPiece = Pawn(
-                color = opponentColor,
-                position = capturedPawnPosition,
-                isKilled = false
-            )
+            capturedPawnSpot.chessPiece = move.pieceKilled?.also { it.isKilled = false }
+                ?: Pawn(color = opponentColor, position = capturedPawnPosition, isKilled = false)
             //movesPlayed.remove(move)
         } else {
             // Restore the piece that was moved to its original position
@@ -1662,11 +1654,8 @@ class GamePlay @Inject constructor(
             endSpot.chessPiece = null
 
             val opponentColor = if (move.player.isWhite) Color.BLACK else Color.WHITE
-            capturedPawnSpot.chessPiece = Pawn(
-                color = opponentColor,
-                position = capturedPawnPosition,
-                isKilled = false
-            )
+            capturedPawnSpot.chessPiece = move.pieceKilled?.also { it.isKilled = false }
+                ?: Pawn(color = opponentColor, position = capturedPawnPosition, isKilled = false)
 
         } else {
             startSpot.chessPiece = move.pieceMoved
@@ -1753,11 +1742,8 @@ class GamePlay @Inject constructor(
             val opponentColor = if (move.player.isWhite) Color.BLACK else Color.WHITE
 
             // Restore the captured pawn to its original position
-            capturedPawnSpot.chessPiece = Pawn(
-                color = opponentColor,
-                position = capturedPawnPosition,
-                isKilled = false
-            )
+            capturedPawnSpot.chessPiece = move.pieceKilled?.also { it.isKilled = false }
+                ?: Pawn(color = opponentColor, position = capturedPawnPosition, isKilled = false)
             if (!isReviewMode) {
                 if (move.pieceKilled != null) piecesKilled.remove(move.pieceKilled)
                 movesUndone.add(move)

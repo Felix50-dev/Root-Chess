@@ -13,6 +13,7 @@ import junit.framework.TestCase.assertEquals
 import junit.framework.TestCase.assertFalse
 import junit.framework.TestCase.assertNotNull
 import junit.framework.TestCase.assertNull
+import junit.framework.TestCase.assertSame
 import junit.framework.TestCase.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -126,6 +127,31 @@ class EnPassantTest {
             "isEnPassant should no longer recognize the (now stale) diagonal move",
             whitePawn.isEnPassant(board, board.getBox(3, 4), board.getBox(2, 3))
         )
+    }
+
+    // ── Undo restores the actual captured pawn object, not a fabricated one ─
+
+    @Test
+    fun undo_afterEnPassantCapture_restoresTheSameCapturedPawnObject() {
+        val whitePawn = Pawn(color = Color.WHITE, position = Position(3, 4), isKilled = false)
+        val blackPawn = Pawn(color = Color.BLACK, position = Position(1, 3), isKilled = false)
+        placePiece(whitePawn, Position(3, 4))
+        placePiece(blackPawn, Position(1, 3))
+
+        game.currentTurn.value = player2
+        makeMove(blackPawn, Position(1, 3), Position(3, 3), player2)
+        game.handleHumanMove(player1, board.getBox(3, 4), board.getBox(2, 3), false, board)
+
+        game.undoMoveByPlayer(game.movesPlayed.last())
+
+        assertSame(
+            "Undo should restore the exact same pawn instance that was captured, " +
+                "not a newly fabricated one — identity is relied on elsewhere " +
+                "(e.g. animation matching by piece id)",
+            blackPawn,
+            pieceAt(3, 3)
+        )
+        assertFalse("Restored pawn should no longer be marked killed", blackPawn.isKilled)
     }
 
     // ── Undo restores both the board and the en passant target ─────────────

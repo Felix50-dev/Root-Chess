@@ -60,13 +60,16 @@ class Board @Inject constructor() {
                 // Clone the Spot
                 val clonedPosition = Position(spot.position.row, spot.position.column)
                 val clonedPiece = spot.chessPiece?.let { piece ->
+                    // hasMoved must carry over — omitting it (as before) makes a clone
+                    // think every piece is still on its starting square for castling
+                    // purposes, regardless of what's actually happened in the real game.
                     when (piece) {
-                        is Pawn -> Pawn(color = piece.color, position = clonedPosition, isKilled =  piece.isKilled)
-                        is Rook -> Rook(color = piece.color, position = clonedPosition, isKilled =  piece.isKilled)
-                        is Knight -> Knight(color = piece.color, position = clonedPosition, isKilled =  piece.isKilled)
-                        is Bishop -> Bishop(color = piece.color, position = clonedPosition, isKilled =  piece.isKilled)
-                        is Queen -> Queen(color = piece.color, position = clonedPosition, isKilled =  piece.isKilled)
-                        is King -> King(color = piece.color, position = clonedPosition, isKilled =  piece.isKilled)
+                        is Pawn -> Pawn(color = piece.color, position = clonedPosition, isKilled = piece.isKilled, hasMoved = piece.hasMoved)
+                        is Rook -> Rook(color = piece.color, position = clonedPosition, isKilled = piece.isKilled, hasMoved = piece.hasMoved)
+                        is Knight -> Knight(color = piece.color, position = clonedPosition, isKilled = piece.isKilled, hasMoved = piece.hasMoved)
+                        is Bishop -> Bishop(color = piece.color, position = clonedPosition, isKilled = piece.isKilled, hasMoved = piece.hasMoved)
+                        is Queen -> Queen(color = piece.color, position = clonedPosition, isKilled = piece.isKilled, hasMoved = piece.hasMoved)
+                        is King -> King(color = piece.color, position = clonedPosition, isKilled = piece.isKilled, hasMoved = piece.hasMoved)
                     }
                 }
                 Spot(clonedPosition, clonedPiece)

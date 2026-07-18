@@ -175,6 +175,12 @@ class ChessGameViewModel @Inject constructor(
     }
 
     fun initializeSounds(context: Context) {
+        // Re-entering the game screen re-triggers this (LaunchedEffect(Unit) fires on every
+        // fresh composition), so release any previously-loaded SoundPool first — otherwise
+        // each Home -> Play -> Quit -> Play cycle leaks a native SoundPool instance.
+        if (::soundPool.isInitialized) {
+            soundPool.release()
+        }
         soundPool = SoundPool.Builder()
             .setMaxStreams(2) // Allow 2 sounds at once
             .setAudioAttributes(
@@ -289,6 +295,17 @@ class ChessGameViewModel @Inject constructor(
         _level.value = aiLevel
     }
 
+    // game.movesPlayed/piecesKilled are mutated from Dispatchers.Default (AI move handling)
+    // while read here on the Main thread. The lists are individually thread-safe
+    // (synchronizedList), but snapshotting/iterating them still needs an explicit
+    // synchronized block — these two helpers make that consistent everywhere instead of
+    // relying on each call site to remember it.
+    private fun movesPlayedSnapshot(): MutableList<com.example.chess.data.model.Move> =
+        synchronized(game.movesPlayed) { game.movesPlayed.toMutableList() }
+
+    private fun piecesKilledSnapshot(): MutableList<ChessPiece> =
+        synchronized(game.piecesKilled) { game.piecesKilled.toMutableList() }
+
     private fun playersForCurrentMode(): Pair<Player, Player> {
         if (_gameMode.value != GameMode.COMPUTER) {
             return playerWhite.copy(playerType = PlayerType.HUMAN) to
@@ -362,13 +379,10 @@ class ChessGameViewModel @Inject constructor(
             }
 
             // Synchronize access to shared collections
-            _piecesKilled.value = synchronized(game.piecesKilled) {
-                game.piecesKilled.toMutableList()
-            }
-            _movesMade.value = synchronized(game.movesPlayed) {
-                game.convertMovesToNotation(game.movesPlayed.toMutableList()).toMutableList()
-            }
-            _movesMadeSAN.value = game.convertMovesToSANNotation(game.movesPlayed)
+            val movesSnapshot = movesPlayedSnapshot()
+            _piecesKilled.value = piecesKilledSnapshot()
+            _movesMade.value = game.convertMovesToNotation(movesSnapshot).toMutableList()
+            _movesMadeSAN.value = game.convertMovesToSANNotation(movesSnapshot)
 
 
 
@@ -507,8 +521,8 @@ class ChessGameViewModel @Inject constructor(
         // wrong king's check indicator in COMPUTER mode.
         val playerColor = if (game.currentTurn.value?.isWhite == true) Color.WHITE else Color.BLACK
         if (game.currentTurn.value?.let { game.detectCheck(it) } == true) {
-            if (game.findKing(game.board, playerColor) != null) {
-                _checkPosition.value = game.findKing(game.board, playerColor)?.position!!
+            game.findKing(game.board, playerColor)?.position?.let {
+                _checkPosition.value = it
             }
         }
     }
@@ -566,15 +580,19 @@ class ChessGameViewModel @Inject constructor(
                 it,
                 game.board
             )
-        }!!
+        } ?: emptyList()
     }
 
     private fun playerMove(start: Spot, end: Spot, isReviewMode: Boolean = false): Boolean {
-        var playerMove = false
-        Log.d(TAG, "playerMove: current is ${game.currentTurn.value!!}")
-        playerMove = makeMove(game.currentTurn.value!!, start, end, game.board, isReviewMode)
+        val currentPlayer = game.currentTurn.value
+        if (currentPlayer == null) {
+            Log.e(TAG, "playerMove: no current player — ignoring move attempt")
+            return false
+        }
+        Log.d(TAG, "playerMove: current is $currentPlayer")
+        val moved = makeMove(currentPlayer, start, end, game.board, isReviewMode)
         syncVisualPiecesWithBoard(game.board)
-        return playerMove
+        return moved
     }
 
     private fun makeMove(
@@ -595,14 +613,14 @@ class ChessGameViewModel @Inject constructor(
     }
 
     fun initReviewMode() {
-        _movesToSimulate = game.movesPlayed.toMutableList()
-        _movesToSimulateSAN = game.convertMovesToNotation(game.movesPlayed)
+        val movesSnapshot = movesPlayedSnapshot()
+        _movesToSimulate = movesSnapshot
+        _movesToSimulateSAN = game.convertMovesToNotation(movesSnapshot)
         Log.d(TAG, "reviewGame: movesToSimulateSAN are $_movesToSimulateSAN")
         val updatedWhitePlayer = playerWhite.copy(playerType = PlayerType.HUMAN)
         val updatedDarkPlayer = playerDark.copy(playerType = PlayerType.HUMAN)
         Log.d(TAG, "reviewGame: moves to simulate are: $_movesToSimulate")
         game.init(updatedWhitePlayer, updatedDarkPlayer, true)
-        game.init(playerWhite, playerDark, true)
         _movesMade.value = emptyList<String>().toMutableList()
         _currentMoveIndex.value = 0
         _currentMoveCategory.value = null
@@ -740,7 +758,9 @@ class ChessGameViewModel @Inject constructor(
                     )
                 }
             } catch (e: Exception) {
-                // Deterministic insight already shown — silent fallback
+                // Deterministic insight already shown — fall back to it silently from the
+                // user's perspective, but still log so a real failure is diagnosable.
+                Log.e(TAG, "launchAiExplanation: AI explanation failed, using deterministic insight", e)
             } finally {
                 _explanationLoading.value = false
             }
@@ -874,9 +894,10 @@ class ChessGameViewModel @Inject constructor(
         val updatedBoard = game.board.clone()
         syncVisualPiecesWithBoard(updatedBoard)
 
-        _piecesKilled.value = game.piecesKilled.toMutableList()     // snapshot, not reference
-        _movesMade.value = game.convertMovesToNotation(game.movesPlayed)
-        _movesMadeSAN.value = game.convertMovesToSANNotation(game.movesPlayed)
+        val movesSnapshot = movesPlayedSnapshot()
+        _piecesKilled.value = piecesKilledSnapshot()     // snapshot, not reference
+        _movesMade.value = game.convertMovesToNotation(movesSnapshot)
+        _movesMadeSAN.value = game.convertMovesToSANNotation(movesSnapshot)
         _isInCheck.value = game.currentTurn.value?.let { game.detectCheck(it) } ?: false
 
         if (_isInCheck.value) getKingPosition()
@@ -888,6 +909,14 @@ class ChessGameViewModel @Inject constructor(
         )
 
         Log.d(TAG, "syncAfterBoardChange: turn is ${game.currentTurn.value}")
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        if (::soundPool.isInitialized) {
+            soundPool.release()
+        }
+        game.stockfish.stopStockfish()
     }
 
     companion object {

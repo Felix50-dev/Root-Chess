@@ -146,9 +146,10 @@ fun ChessAnalysisScreen(
 
                 // ── CTA button ───────────────────────────────────────────────
                 AnalysisButton(
-                    isAnalyzing = isAnalyzing,
-                    isReady     = isReady,
-                    onClick     = onStartReview,
+                    isAnalyzing  = isAnalyzing,
+                    isReady      = isReady,
+                    onClick      = onStartReview,
+                    realProgress = analysisProgress,
                 )
 
                 Spacer(modifier = Modifier.height(16.dp))
