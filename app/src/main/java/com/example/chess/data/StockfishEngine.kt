@@ -3,12 +3,13 @@ package com.example.chess.data
 import android.util.Log
 import com.example.chess.domain.model.EvalParseState
 import com.example.chess.domain.model.PositionEval
-import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import java.io.BufferedReader
 import java.io.BufferedWriter
 import java.io.File
@@ -16,9 +17,19 @@ import java.io.IOException
 import java.io.InputStreamReader
 import java.io.OutputStreamWriter
 
+private const val STOCKFISH_READ_TIMEOUT_MS = 5000L
+
 class StockfishEngine {
     private var process: Process? = null
     private var outputStream: BufferedWriter? = null
+
+    // A single reader for the lifetime of the process, created once in startStockfish()
+    // and reused by every getBestMove()/getDetailedEval() call. A fresh BufferedReader
+    // per call would silently lose whatever it had already buffered-but-not-yet-returned
+    // from process.inputStream when discarded — corrupting or hanging the next read.
+    // internal (not private) so tests can inject a fake reader without a real engine process.
+    internal var reader: BufferedReader? = null
+
     private val _bestMoveFlow = MutableStateFlow("")
     val bestMoveFlow: StateFlow<String> = _bestMoveFlow.asStateFlow()
 
@@ -29,6 +40,7 @@ class StockfishEngine {
             process = Runtime.getRuntime().exec(stockfishFile.absolutePath)
             Log.d("Stockfish", "Stockfish process started successfully")
             outputStream = BufferedWriter(OutputStreamWriter(process?.outputStream))
+            reader = process?.inputStream?.let { BufferedReader(InputStreamReader(it)) }
         } catch (e: IOException) {
             e.printStackTrace()
             Log.e("Stockfish", "Error starting Stockfish: ${e.message}")
@@ -36,16 +48,15 @@ class StockfishEngine {
     }
 
     suspend fun getBestMove(): String {
-        // Create a CompletableDeferred that will be completed with the best move
-        val bestMoveDeferred = CompletableDeferred<String>()
+        val activeReader = reader ?: return ""
 
-        withContext(Dispatchers.IO) {
-            process?.let { p ->
-                val reader = BufferedReader(InputStreamReader(p.inputStream))
-                try {
+        return try {
+            withTimeout(STOCKFISH_READ_TIMEOUT_MS) {
+                withContext(Dispatchers.IO) {
                     var line: String?
                     var evaluation: Int?
-                    while (reader.readLine().also { line = it } != null) {
+                    var bestMove = ""
+                    while (activeReader.readLine().also { line = it } != null) {
                         Log.d("Stockfish", "Stockfish Output: $line")
 
                         // Extract evaluation score
@@ -58,33 +69,49 @@ class StockfishEngine {
                         }
 
                         if (line!!.startsWith("bestmove")) {
-                            val move = line!!.split(" ")[1]
-                            // Complete the deferred with the best move
-                            bestMoveDeferred.complete(move)
+                            bestMove = line!!.split(" ")[1]
                             break
                         }
                     }
-                } catch (e: IOException) {
-                    e.printStackTrace()
+                    bestMove
                 }
             }
+        } catch (e: TimeoutCancellationException) {
+            Log.e(
+                "Stockfish",
+                "getBestMove timed out after ${STOCKFISH_READ_TIMEOUT_MS}ms — engine may be wedged"
+            )
+            ""
+        } catch (e: IOException) {
+            Log.e("Stockfish", "getBestMove IO error: ${e.message}", e)
+            ""
         }
-
-        // Wait for the best move to be available and return it
-        return bestMoveDeferred.await()
     }
 
-    suspend fun getDetailedEval(): PositionEval = withContext(Dispatchers.IO) {
+    suspend fun getDetailedEval(): PositionEval {
+        val activeReader = reader ?: return PositionEval(0, "", 0, emptyList(), 0)
         val state = EvalParseState()
-        process?.let { p ->
-            val reader = BufferedReader(InputStreamReader(p.inputStream))
-            var line: String?
-            while (reader.readLine().also { line = it } != null) {
-                parseLine(line!!, state)       // ← parse as it streams, no list
-                if (state.done) break          // ← stop immediately on bestmove
+
+        try {
+            withTimeout(STOCKFISH_READ_TIMEOUT_MS) {
+                withContext(Dispatchers.IO) {
+                    var line: String?
+                    while (activeReader.readLine().also { line = it } != null) {
+                        parseLine(line!!, state)       // ← parse as it streams, no list
+                        if (state.done) break          // ← stop immediately on bestmove
+                    }
+                }
             }
+        } catch (e: TimeoutCancellationException) {
+            Log.e(
+                "Stockfish",
+                "getDetailedEval timed out after ${STOCKFISH_READ_TIMEOUT_MS}ms — engine may be wedged"
+            )
+        } catch (e: IOException) {
+            Log.e("Stockfish", "getDetailedEval IO error: ${e.message}", e)
         }
-        PositionEval(state.score, state.bestMove, state.mateIn, state.pv, state.depth)
+
+        return PositionEval(state.score, state.bestMove, state.mateIn, state.pv, state.depth)
     }
 
     fun parseLine(line: String, state: EvalParseState) {
@@ -142,6 +169,12 @@ class StockfishEngine {
     fun stopStockfish() {
         sendCommand("quit")
         process?.destroy()
+        try {
+            reader?.close()
+        } catch (e: IOException) {
+            Log.e("Stockfish", "Error closing reader: ${e.message}")
+        }
+        reader = null
     }
 }
 
