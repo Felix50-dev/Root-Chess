@@ -1109,11 +1109,13 @@ class GamePlay @Inject constructor(
         if (player != currentTurn.value) return false
         if ((sourcePiece.color == Color.WHITE) != player.isWhite) return false
 
-        // Remember the en passant target as it stood before this move so undo can
-        // restore it exactly, and default the board to "no en passant available" —
-        // it's only re-armed below if this move is itself a two-square pawn push.
+        // Remember the en passant target and the mover's hasMoved flag as they stood
+        // before this move, so undo can restore them exactly. The board's en passant
+        // target defaults to "none available" below — it's only re-armed if this move
+        // is itself a two-square pawn push.
         move.previousEnPassantTarget = myBoard.enPassantTarget
-        move.enPassantTargetCaptured = true
+        move.previousHasMoved = sourcePiece.hasMoved
+        move.wasCommitted = true
 
         // En passant
         if (sourcePiece is Pawn && sourcePiece.isEnPassant(myBoard, move.from, move.to)) {
@@ -1558,9 +1560,10 @@ class GamePlay @Inject constructor(
         }
         // Only restore when this undo pairs with a real makeMove() — never for the
         // speculative simulateMove()/undoMove() cycles used by legality scans (isStalemate
-        // also calls this 3-arg overload, but never sets enPassantTargetCaptured).
-        if (move.enPassantTargetCaptured) {
+        // also calls this 3-arg overload, but never sets wasCommitted).
+        if (move.wasCommitted) {
             myBoard.enPassantTarget = move.previousEnPassantTarget
+            move.pieceMoved?.hasMoved = move.previousHasMoved
         }
         currentTurn.value = player
     }
@@ -1631,8 +1634,9 @@ class GamePlay @Inject constructor(
 
             Log.d(TAG, "undoMove: piece removed is: $move")
         }
-        if (move.enPassantTargetCaptured) {
+        if (move.wasCommitted) {
             myBoard.enPassantTarget = move.previousEnPassantTarget
+            move.pieceMoved?.hasMoved = move.previousHasMoved
         }
     }
 
@@ -1726,8 +1730,9 @@ class GamePlay @Inject constructor(
                 movesPlayed.remove(move)
             }
         }
-        if (move.enPassantTargetCaptured) {
+        if (move.wasCommitted) {
             board.enPassantTarget = move.previousEnPassantTarget
+            move.pieceMoved?.hasMoved = move.previousHasMoved
         }
     }
 

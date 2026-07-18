@@ -9,9 +9,11 @@ data class Move(
     var isCastlingMove: Boolean = false,
     var promotionPiece: ChessPiece? = null,
     var isEnPassant: Boolean = false,
-    // Set only by GamePlay.makeMove(), never by simulateMove(). Lets undo restore
-    // Board.enPassantTarget after a real committed move, while leaving it untouched
-    // when undoing a speculative simulateMove() used for legality scanning.
+    // Set only by GamePlay.makeMove(), never by simulateMove(). Marks that this Move
+    // was produced by a real commit rather than a speculative legality-scan simulation,
+    // so undo knows it's safe to restore the fields below (simulateMove() never touches
+    // enPassantTarget or hasMoved, so there's nothing to restore for a simulated move).
+    var wasCommitted: Boolean = false,
     var previousEnPassantTarget: Position? = null,
-    var enPassantTargetCaptured: Boolean = false
+    var previousHasMoved: Boolean = false
 )
