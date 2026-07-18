@@ -501,7 +501,11 @@ class ChessGameViewModel @Inject constructor(
     }
 
     private fun getKingPosition() {
-        val playerColor = if (game.currentTurn.value == playerWhite) Color.WHITE else Color.BLACK
+        // Compare only isWhite, not the whole Player — Player is a data class, so comparing
+        // against the playerWhite/playerDark templates (always playerType = HUMAN) would
+        // structurally mismatch whenever the mover is actually an AI, highlighting the
+        // wrong king's check indicator in COMPUTER mode.
+        val playerColor = if (game.currentTurn.value?.isWhite == true) Color.WHITE else Color.BLACK
         if (game.currentTurn.value?.let { game.detectCheck(it) } == true) {
             if (game.findKing(game.board, playerColor) != null) {
                 _checkPosition.value = game.findKing(game.board, playerColor)?.position!!
@@ -825,7 +829,10 @@ class ChessGameViewModel @Inject constructor(
         if (game.movesPlayed.isEmpty()) return
         Log.d(TAG, "undoMove: movesMade are: ${game.movesPlayed}")
 
-        if (playerWhite.playerType == PlayerType.AI || playerDark.playerType == PlayerType.AI) {
+        // playerWhite/playerDark are hard-coded HUMAN templates — never mutated — so
+        // comparing their playerType here was always false. What actually determines
+        // whether the AI made the last move is the current game mode.
+        if (_gameMode.value == GameMode.COMPUTER) {
             // Undo both AI move and player move together
             if (game.movesPlayed.isNotEmpty()) {
                 game.undoMoveByPlayer(game.movesPlayed.last())
@@ -847,7 +854,7 @@ class ChessGameViewModel @Inject constructor(
         if (game.movesUndone.isEmpty()) return
         Log.d(TAG, "redoMove: movesUndone are: ${game.movesUndone}")
 
-        if (playerWhite.playerType == PlayerType.AI || playerDark.playerType == PlayerType.AI) {
+        if (_gameMode.value == GameMode.COMPUTER) {
             // Redo player move — makeMove inside redoMove handles turn switch
             game.redoMove(game.movesUndone.last(), game.board)
             // Redo AI move if available
