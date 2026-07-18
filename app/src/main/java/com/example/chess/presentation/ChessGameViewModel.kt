@@ -22,7 +22,11 @@ import com.example.chess.data.model.Position
 import com.example.chess.data.model.SANMovePair
 import com.example.chess.data.model.Spot
 import com.example.chess.data.repository.GamePlay
-import com.example.chess.data.repository.TacticsRecognizer
+import com.example.chess.data.repository.MoveExplainer
+import com.example.chess.domain.model.GameSummary
+import com.example.chess.domain.model.MoveExplanationRequest
+import com.example.chess.domain.model.MoveInsight
+import com.example.chess.presentation.model.VisualPiece
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
@@ -32,18 +36,27 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeout
 import javax.inject.Inject
-
+ 
 private const val TAG = "ChessGameViewModel"
 
 @HiltViewModel
 class ChessGameViewModel @Inject constructor(
     private val game: GamePlay,
+    private val moveExplainer: MoveExplainer,
     @ApplicationContext context: Context
 ) : ViewModel() {
 
     private val _lastMove = MutableStateFlow<Move?>(null)
     val lastMove: StateFlow<Move?> = _lastMove.asStateFlow()
+
+    private val _analysisProgress = MutableStateFlow(0f)
+    val analysisProgress: StateFlow<Float> = _analysisProgress.asStateFlow()
+
+    // Add loading state for explanation
+    private val _explanationLoading = MutableStateFlow(false)
+    val explanationLoading: StateFlow<Boolean> = _explanationLoading.asStateFlow()
 
     private val _aiLastMove = MutableStateFlow<Move?>(null)
     val aiLastMove: StateFlow<Move?> = _aiLastMove.asStateFlow()
@@ -95,8 +108,8 @@ class ChessGameViewModel @Inject constructor(
     var piecesKilled: StateFlow<MutableList<ChessPiece>> = _piecesKilled.asStateFlow()
 
     //moves made
-    private val _movesMade = MutableStateFlow<MutableList<String>>(mutableListOf())
-    val movesMade: StateFlow<MutableList<String>> = _movesMade.asStateFlow()
+    private val _movesMade = MutableStateFlow<List<String>>(listOf())
+    val movesMade: StateFlow<List<String>> = _movesMade.asStateFlow()
 
     private val _movesMadeSAN = MutableStateFlow<MutableList<SANMovePair>>(mutableListOf())
     val movesMadeSAN: StateFlow<MutableList<SANMovePair>> = _movesMadeSAN.asStateFlow()
@@ -114,16 +127,45 @@ class ChessGameViewModel @Inject constructor(
     private val _feedback = MutableStateFlow<Feedback?>(null)
     val feedback: StateFlow<Feedback?> = _feedback.asStateFlow()
 
+    private val _isAnalyzing = MutableStateFlow(false)
+    val isAnalyzing: StateFlow<Boolean> = _isAnalyzing.asStateFlow()
+
     private var autoReviewJob: Job? = null
     private val _isPlaying = MutableStateFlow(false)
     val isPlaying: StateFlow<Boolean> = _isPlaying
 
-
+    fun totalMovesCount(): Int = _movesToSimulate.size
     private var aiJob: Job? = null
+    private var isPromotionPending = false
 
     private lateinit var soundPool: SoundPool
     private var moveSoundId: Int = 0
     private var captureSoundId: Int = 0
+
+    private val _visualPieces = MutableStateFlow<List<VisualPiece>>(emptyList())
+    val visualPieces = _visualPieces.asStateFlow()
+
+    private val _currentInsight = MutableStateFlow<MoveInsight?>(null)
+    val currentInsight: StateFlow<MoveInsight?> = _currentInsight.asStateFlow()
+
+    private val _gameSummary = MutableStateFlow<GameSummary?>(null)
+    val gameSummary: StateFlow<GameSummary?> = _gameSummary.asStateFlow()
+
+    private val _bestMoveArrow = MutableStateFlow<String?>(null)
+    val bestMoveArrow: StateFlow<String?> = _bestMoveArrow.asStateFlow()
+
+    private val _playerMoveArrow = MutableStateFlow<String?>(null)
+    val playerMoveArrow: StateFlow<String?> = _playerMoveArrow.asStateFlow()
+
+    private fun buildPGN(upToIndex: Int): String {
+        return _movesToSimulateSAN
+            .take(upToIndex)
+            .chunked(2)
+            .mapIndexed { i, pair ->
+                "${i + 1}. ${pair[0]}${if (pair.size > 1) " ${pair[1]}" else ""}"
+            }
+            .joinToString(" ")
+    }
 
     init {
         viewModelScope.launch {
@@ -188,7 +230,8 @@ class ChessGameViewModel @Inject constructor(
         matingPiece: ChessPiece?,
         tactic: List<String>? = null
     ): Feedback {
-        val explanation = generateExplanation(category, bestMove, chessPiece, mateIn, matingPiece, tactic)
+        val explanation =
+            generateExplanation(category, bestMove, chessPiece, mateIn, matingPiece, tactic)
         val feedback = Feedback(
             move = move,
             type = category,
@@ -207,10 +250,12 @@ class ChessGameViewModel @Inject constructor(
     fun setGameMode(gameMode: GameMode) {
         viewModelScope.launch {
             _gameMode.value = gameMode
+            isPromotionPending = false
             if (gameMode == GameMode.FRIEND) {
-                playerWhite.playerType = PlayerType.HUMAN
-                playerDark.playerType = PlayerType.HUMAN
-                game.init(playerWhite, playerDark, true)
+                val updatedWhitePlayer = playerWhite.copy(playerType = PlayerType.HUMAN)
+                val updatedDarkPlayer = playerDark.copy(playerType = PlayerType.HUMAN)
+                game.init(updatedWhitePlayer, updatedDarkPlayer, true)
+                _visualPieces.value = createInitialVisualPieces(game.board)
                 game.movesPlayed.clear()
                 _boardState.value =
                     BoardState(game.board, game.currentTurn.value, game.status, null)
@@ -221,23 +266,53 @@ class ChessGameViewModel @Inject constructor(
         }
     }
 
+    private fun syncVisualPiecesWithBoard(
+        board: Board,
+        previousPositions: Map<String, Position> = _visualPieces.value.associate { it.id to it.position }
+    ) {
+        val updated = board.boxes.flatten().mapNotNull { spot ->
+            spot.chessPiece?.let { piece ->
+                VisualPiece(
+                    id = piece.id,
+                    asset = piece.vectorAsset,
+                    color = piece.color,
+                    position = spot.position,
+                    previousPosition = previousPositions[piece.id]  // always the pre-move position
+                )
+            }
+        }
+
+        _visualPieces.value = updated
+    }
 
     fun setAILevel(aiLevel: AILevel) {
         _level.value = aiLevel
     }
 
+    private fun playersForCurrentMode(): Pair<Player, Player> {
+        if (_gameMode.value != GameMode.COMPUTER) {
+            return playerWhite.copy(playerType = PlayerType.HUMAN) to
+                    playerDark.copy(playerType = PlayerType.HUMAN)
+        }
+
+        val humanIsWhite = _color.value
+        val white = playerWhite.copy(
+            playerType = if (humanIsWhite) PlayerType.HUMAN else PlayerType.AI
+        )
+        val black = playerDark.copy(
+            playerType = if (humanIsWhite) PlayerType.AI else PlayerType.HUMAN
+        )
+        return white to black
+    }
+
     fun setColor(isWhite: Boolean) {
         _color.value = isWhite
+        isPromotionPending = false
 
         if (_gameMode.value == GameMode.COMPUTER) {
-            if (isWhite) {
-                playerWhite.playerType = PlayerType.HUMAN
-                playerDark.playerType = PlayerType.AI
-            } else {
-                playerWhite.playerType = PlayerType.AI
-                playerDark.playerType = PlayerType.HUMAN
-            }
-            game.init(playerWhite, playerDark, true)
+            val (updatedWhitePlayer, updatedDarkPlayer) = playersForCurrentMode()
+            game.init(updatedWhitePlayer, updatedDarkPlayer, true)
+            _visualPieces.value = createInitialVisualPieces(game.board)
         }
 
         _boardState.value =
@@ -248,7 +323,7 @@ class ChessGameViewModel @Inject constructor(
         aiJob = viewModelScope.launch(Dispatchers.Main) {
             game.currentTurn
                 .collect { currentPlayer ->
-                    if (currentPlayer?.playerType == PlayerType.AI) {
+                    if (currentPlayer?.playerType == PlayerType.AI && !isPromotionPending) {
                         handleAIMoveAndUpdateState(currentPlayer)
                     }
                 }
@@ -257,7 +332,17 @@ class ChessGameViewModel @Inject constructor(
 
     fun analyzeGame() {
         viewModelScope.launch {
-            _analysisResult.value = game.analyzeMoveScores(_movesMade.value)
+            _isAnalyzing.value = true
+            val result = game.analyzeMoveScores(
+                movesPlayed = _movesMade.value,
+                onProgress = { current, total ->
+                    // drive the button fill animation with real progress
+                    _analysisProgress.value = current.toFloat() / total.toFloat()
+                }
+            )
+            _analysisResult.value = result
+            _gameSummary.value = result.gameSummary
+            _isAnalyzing.value = false
         }
     }
 
@@ -265,7 +350,10 @@ class ChessGameViewModel @Inject constructor(
     private suspend fun handleAIMoveAndUpdateState(player: Player) {
         try {
             Log.d(TAG, "AI turn started: ${player.playerType}")
+            delay(MOVE_ANIMATION_TIME)
+            if (isPromotionPending) return
             game.handleAIMove(player, _level.value)
+            syncVisualPiecesWithBoard(game.board)
             val aiLastMove = game.aiLastMove
             val isCapture = aiLastMove?.pieceKilled != null
             if (aiLastMove != null) {
@@ -278,7 +366,7 @@ class ChessGameViewModel @Inject constructor(
                 game.piecesKilled.toMutableList()
             }
             _movesMade.value = synchronized(game.movesPlayed) {
-                game.convertMovesToNotation(game.movesPlayed.toMutableList())
+                game.convertMovesToNotation(game.movesPlayed.toMutableList()).toMutableList()
             }
             _movesMadeSAN.value = game.convertMovesToSANNotation(game.movesPlayed)
 
@@ -311,16 +399,54 @@ class ChessGameViewModel @Inject constructor(
     }
 
     fun setPromotedPiece(promotedPiece: ChessPiece) {
-        _promotionPiece.value = promotedPiece
-        _showPawnPromotion.value = false // Hide dialog after selection
-        val lastMoveValue = _lastMove.value ?: return
-        val targetSpot = game.board.getBox(lastMoveValue.to.row, lastMoveValue.to.column)
-        applyPromotion(targetSpot)
+        _showPawnPromotion.value = false
+
+        // ✅ Get the actual Move from movesPlayed
+        val lastMove = game.movesPlayed.lastOrNull()
+        if (lastMove == null) {
+            isPromotionPending = false
+            return
+        }
+        val targetSpot = game.board.getBox(lastMove.to.position.row, lastMove.to.position.column)
+
+        targetSpot.chessPiece = promotedPiece
+        promotedPiece.position = targetSpot.position
+
+        // ✅ Set promotion on the Move that's already in movesPlayed
+        lastMove.promotionPiece = promotedPiece
+
+        game._promotionPieceFlow.value = null
+        _promotionPiece.value = null
+        isPromotionPending = false
+
+        syncAfterBoardChange()
+
+        val currentPlayer = game.currentTurn.value
+        if (currentPlayer?.playerType == PlayerType.AI) {
+            viewModelScope.launch(Dispatchers.Main) {
+                handleAIMoveAndUpdateState(currentPlayer)
+            }
+        }
+    }
+
+    private fun createInitialVisualPieces(board: Board): List<VisualPiece> {
+        return board.boxes.flatten().mapNotNull { spot ->
+            spot.chessPiece?.let { piece ->
+                VisualPiece(
+                    id = piece.id,
+                    asset = piece.vectorAsset,
+                    color = piece.color,
+                    position = spot.position
+                )
+            }
+        }
     }
 
     fun startNewGame() {
         viewModelScope.launch {
-            game.init(playerWhite, playerDark, true)
+            val (whitePlayer, blackPlayer) = playersForCurrentMode()
+            game.init(whitePlayer, blackPlayer, true)
+            _visualPieces.value = createInitialVisualPieces(game.board)
 //            game.isGameOver = false
             game.movesPlayed.clear()
             _movesMade.value = emptyList<String>().toMutableList()
@@ -328,21 +454,30 @@ class ChessGameViewModel @Inject constructor(
             //game.piecesKilled.clear()
             _piecesKilled.value = emptyList<ChessPiece>().toMutableList()
             _selectedPiecePosition.value = null
-            _boardState.value.gameStatus = GameStatus.ACTIVE
+            _boardState.value = _boardState.value.copy(
+                gameStatus = GameStatus.ACTIVE
+            )
             _promotionPiece.value = null
+            isPromotionPending = false
             _boardState.value = BoardState(game.board, game.currentTurn.value, game.status, null)
             // Cancel any existing AI job and start new collector
             aiJob?.cancel()
             aiJob = viewModelScope.launch(Dispatchers.Main) {
                 game.currentTurn
                     .collect { currentPlayer ->
-                        if (currentPlayer?.playerType == PlayerType.AI) {
+                        if (currentPlayer?.playerType == PlayerType.AI && !isPromotionPending) {
                             handleAIMoveAndUpdateState(currentPlayer)
                         }
                     }
             }
             Log.d(TAG, "startNewGame: ${game.board.boxes}")
         }
+    }
+
+    fun resetGameStatus() {
+        _boardState.value = _boardState.value.copy(
+            gameStatus = GameStatus.ACTIVE
+        )
     }
 
     fun quitGame() {
@@ -355,6 +490,7 @@ class ChessGameViewModel @Inject constructor(
         _boardState.value = BoardState(null, null, game.status, null)
         _selectedPiecePosition.value = null
         _promotionPiece.value = null
+        isPromotionPending = false
         aiJob?.cancel()
     }
 
@@ -374,24 +510,28 @@ class ChessGameViewModel @Inject constructor(
     }
 
     fun checkForPawnPromotion(targetSpot: Spot) {
-        val piece = targetSpot.chessPiece
-        if (piece is Pawn && ((piece.color == Color.WHITE && targetSpot.position.row == 0) || (piece.color == Color.BLACK && targetSpot.position.row == 7))
-        ) {
-            if (game.currentTurn.value?.playerType == PlayerType.HUMAN) {
-                _showPawnPromotion.value = true
-                _promotionPiece.value = null
-            }
-        }
-    }
+        val piece = targetSpot.chessPiece ?: return
 
-    private fun applyPromotion(targetSpot: Spot) {
-        _promotionPiece.value?.let { promotedPiece ->
-            targetSpot.chessPiece = promotedPiece
-            _boardState.value = _boardState.value.copy(board = game.board.clone())
-            Log.d(
-                TAG,
-                "Promotion applied: ${promotedPiece.javaClass.simpleName} at ${targetSpot.position}"
-            )
+        val isPromotion = piece is Pawn && (
+                (piece.color == Color.WHITE && targetSpot.position.row == 0) ||
+                        (piece.color == Color.BLACK && targetSpot.position.row == 7)
+                )
+
+        if (!isPromotion) return
+
+        // Check the piece color, not the current turn
+        // Turn has already switched by the time this runs
+        val (whitePlayer, blackPlayer) = playersForCurrentMode()
+        val isHumanPiece = if (piece.color == Color.WHITE) {
+            whitePlayer.playerType == PlayerType.HUMAN
+        } else {
+            blackPlayer.playerType == PlayerType.HUMAN
+        }
+
+        if (isHumanPiece) {
+            isPromotionPending = true
+            _showPawnPromotion.value = true
+            _promotionPiece.value = null
         }
     }
 
@@ -403,7 +543,7 @@ class ChessGameViewModel @Inject constructor(
         _lastMove.value = Move(selectedSpot.position, targetPosition)
         _validMoves.value = emptyList()
 
-        // Delay the actual move and board update until animation completes
+
         viewModelScope.launch {
             //delay(400) // Match animation duration
             playerMove(selectedSpot, targetSpot)
@@ -427,10 +567,9 @@ class ChessGameViewModel @Inject constructor(
 
     private fun playerMove(start: Spot, end: Spot, isReviewMode: Boolean = false): Boolean {
         var playerMove = false
-        viewModelScope.launch {
-            Log.d(TAG, "playerMove: current is ${game.currentTurn.value!!}")
-            playerMove = makeMove(game.currentTurn.value!!, start, end, game.board, isReviewMode)
-        }
+        Log.d(TAG, "playerMove: current is ${game.currentTurn.value!!}")
+        playerMove = makeMove(game.currentTurn.value!!, start, end, game.board, isReviewMode)
+        syncVisualPiecesWithBoard(game.board)
         return playerMove
     }
 
@@ -442,25 +581,12 @@ class ChessGameViewModel @Inject constructor(
         isReviewMode: Boolean = false
     ): Boolean {
         val value = game.handleHumanMove(player, start, end, isReviewMode, board)
-        val isCaptureMove = end.chessPiece != null
-        checkForPawnPromotion(end)
-        _piecesKilled.value = game.piecesKilled.toMutableList()
-        _movesMade.value = game.convertMovesToNotation(game.movesPlayed)
-        Log.d(TAG, "makeMove: movesMade are: ${_movesMade.value}")
-        _movesMadeSAN.value = game.convertMovesToSANNotation(game.movesPlayed)
-        Log.d(TAG, "makeMove: SAN are: ${_movesMadeSAN.value}")
-        _boardState.value = _boardState.value.copy(
-            board = game.board,
-            currentPlayer = game.currentTurn.value,
-            gameStatus = game.status,
-            lastMovedFrom = start.position
-        )
+        if (value) {
+            // Only check promotion if move actually succeeded
+            checkForPawnPromotion(end)
+        }
         _lastMove.value = Move(start.position, end.position)
-        Log.d(TAG, "makeMove last move is: ${_boardState.value.lastMovedFrom}")
-        checkForPawnPromotion(end)
-
-        if (isCaptureMove) soundPool.play(captureSoundId, 0.5f, 0.5f, 1, 0, 1f) else
-            soundPool.play(moveSoundId, 0.5f, 0.5f, 1, 0, 1f)
+        syncAfterBoardChange()
         return value
     }
 
@@ -468,147 +594,223 @@ class ChessGameViewModel @Inject constructor(
         _movesToSimulate = game.movesPlayed.toMutableList()
         _movesToSimulateSAN = game.convertMovesToNotation(game.movesPlayed)
         Log.d(TAG, "reviewGame: movesToSimulateSAN are $_movesToSimulateSAN")
-        if (playerWhite.playerType == PlayerType.AI) {
-            playerWhite.playerType = PlayerType.HUMAN
-        }
-        if (playerDark.playerType == PlayerType.AI) {
-            playerDark.playerType = PlayerType.HUMAN
-        }
+        val updatedWhitePlayer = playerWhite.copy(playerType = PlayerType.HUMAN)
+        val updatedDarkPlayer = playerDark.copy(playerType = PlayerType.HUMAN)
         Log.d(TAG, "reviewGame: moves to simulate are: $_movesToSimulate")
+        game.init(updatedWhitePlayer, updatedDarkPlayer, true)
         game.init(playerWhite, playerDark, true)
         _movesMade.value = emptyList<String>().toMutableList()
         _currentMoveIndex.value = 0
         _currentMoveCategory.value = null
     }
 
-    fun nextMove(isReviewMode: Boolean = false) {
-        if (_currentMoveIndex.value < _movesToSimulate.size) {
-            if (_currentMoveIndex.value == 0) game.currentTurn.value = playerWhite
-            val move = _movesToSimulate[_currentMoveIndex.value]
-            val tactic = _analysisResult.value?.tactics?.getOrNull(_currentMoveIndex.value)
-            Log.d(TAG, "nextMove: current move is $move tactic is $tactic")
-            if (!isReviewMode) {
-                move.from.chessPiece = move.to.chessPiece
-                move.to.chessPiece =
-                    game.board.getBox(move.to.position.row, move.from.position.column).chessPiece
-            }
-            playerMove(move.from, move.to, true)
-            Log.d(TAG, "nextMove: current move is $move")
-            Log.d(TAG, "previousMove: board has ${game.board.getBox(5, 5)}")
-            val sanMove = _movesToSimulateSAN[_currentMoveIndex.value]
-            val category = _analysisResult.value?.moveCategories?.getOrNull(_currentMoveIndex.value)
-            val bestMove = _analysisResult.value?.bestMoves?.getOrNull(_currentMoveIndex.value)
-            val captureOpportunity =
-                _analysisResult.value?.captureOpportunity?.getOrNull(_currentMoveIndex.value)
-            val missedMate = _analysisResult.value?.missedMates?.getOrNull(_currentMoveIndex.value)
-            if (tactic?.isNotEmpty() == true) {
-                _feedback.value = createFeedbackForMove(
-                    sanMove,
-                    category.toString(),
-                    bestMove,
-                    captureOpportunity?.target.toString(),
-                    missedMate?.mateInBefore,
-                    missedMate?.moveObject?.pieceMoved,
-                    tactic
-                )
-            } else {
-                _feedback.value = createFeedbackForMove(
-                    sanMove,
-                    category.toString(),
-                    bestMove,
-                    captureOpportunity?.target.toString(),
-                    missedMate?.mateInBefore,
-                    missedMate?.moveObject?.pieceMoved,
-                    tactic
-                )
-            }
-            _currentMoveIndex.value++
-            _currentMoveCategory.value =
-                analysisResult.value?.moveCategories?.getOrNull(_currentMoveIndex.value - 1)
-            Log.d(
-                TAG,
-                "nextMove: Move ${_currentMoveIndex.value} made: $move, category: ${_currentMoveCategory.value}"
-            )
-            _boardState.value = _boardState.value.copy(
-                board = game.board,
-                currentPlayer = game.currentTurn.value,
-                gameStatus = game.status,
-            )
+    suspend fun nextMove() {
+        if (_currentMoveIndex.value >= _movesToSimulate.size) return
+
+        val index = _currentMoveIndex.value
+        val move = _movesToSimulate[index]
+
+        // 1. Snapshot positions BEFORE the board changes
+        val previousPositions = _visualPieces.value.associate { it.id to it.position }
+
+        // 2. Apply the move to the board
+        applyReviewMove(move)
+
+        // 3. Update board state first
+        _boardState.value = _boardState.value.copy(
+            board = game.board.clone(),
+            currentPlayer = game.currentTurn.value,
+            gameStatus = game.status,
+        )
+
+        // 4. Yield one frame so Compose settles the board state recomposition
+        delay(16L)
+
+        // 5. NOW update visual pieces with correct previousPositions — animation fires from here
+        syncVisualPiecesWithBoard(game.board, previousPositions)
+
+        val insight = _analysisResult.value?.insights?.getOrNull(index)
+        _currentInsight.value = insight
+
+        val sanMove = _movesToSimulateSAN.getOrNull(index) ?: ""
+        val category = insight?.category ?: "Best"
+        val bestMove = insight?.bestMove
+        val played = _movesToSimulateSAN.getOrNull(index)
+
+        if (bestMove != null && played != null && bestMove != played) {
+            _bestMoveArrow.value = bestMove
+            _playerMoveArrow.value = played
         } else {
-            Log.e(TAG, "nextMove: No more moves to simulate")
+            _bestMoveArrow.value = null
+            _playerMoveArrow.value = null
+        }
+
+        _feedback.value = Feedback(
+            move = sanMove,
+            type = category,
+            explanation = insight?.insightDetail ?: "",
+            bestMove = if (category in listOf("Inaccurate", "Mistake", "Blunder"))
+                bestMove else null
+        )
+
+        insight?.let { launchAiExplanation(it, sanMove, index) }
+
+        _currentMoveIndex.value = index + 1
+        _currentMoveCategory.value = category
+
+        // 6. Wait for the animation to complete before returning
+        delay(MOVE_ANIMATION_TIME)
+    }
+
+    suspend fun previousMove() {
+        if (_currentMoveIndex.value <= 0 || _isPlaying.value) return
+
+        val prevIndex = _currentMoveIndex.value - 1
+        val move = _movesToSimulate[prevIndex]
+        val previousPositions =
+            _visualPieces.value.associate { it.id to it.position }// ← explicit Main dispatcher
+        undoReviewMove(move)
+        syncVisualPiecesWithBoard(game.board, previousPositions)
+
+        val insight = _analysisResult.value?.insights?.getOrNull(prevIndex)
+        val sanMove = _movesToSimulateSAN.getOrNull(prevIndex) ?: ""
+        val category = insight?.category ?: "Best"
+        val bestMove = _analysisResult.value?.bestMoves?.getOrNull(prevIndex)
+        val played = _movesToSimulateSAN.getOrNull(prevIndex)
+
+        _currentInsight.value = insight
+        _currentMoveIndex.value = prevIndex
+        _currentMoveCategory.value = category
+
+        _bestMoveArrow.value = if (played != bestMove) bestMove else null
+        _playerMoveArrow.value = if (played != bestMove) played else null
+
+        _feedback.value = Feedback(
+            move = sanMove,
+            type = category,
+            explanation = insight?.insightDetail ?: "",
+            bestMove = if (category in listOf("Inaccurate", "Mistake", "Blunder"))
+                insight?.bestMove else null
+        )
+
+        insight?.let { launchAiExplanation(it, sanMove, prevIndex) }
+
+        _boardState.value = _boardState.value.copy(
+            board = game.board.clone(),
+            currentPlayer = game.currentTurn.value,
+            gameStatus = game.status,
+        )
+        delay(MOVE_ANIMATION_TIME)
+    }
+
+    private fun launchAiExplanation(
+        insight: MoveInsight,
+        sanMove: String,
+        index: Int,
+    ) {
+        viewModelScope.launch {
+            _explanationLoading.value = true
+            try {
+                val request = MoveExplanationRequest(
+                    type = insight.category,
+                    movePlayed = sanMove,
+                    bestMove = insight.bestMove,
+                    chessPiece = null,
+                    evalDelta = insight.evalLost.toFloat(),
+                    tactic = _analysisResult.value?.tactics?.getOrNull(index),
+                    mateIn = _analysisResult.value?.missedMates
+                        ?.getOrNull(index)?.mateInBefore,
+                    matingPiece = null,
+                    pgn = buildPGN(index),
+                    playerElo = 1200,
+                    moveNumber = index + 1,
+                    playerColor = if (index % 2 == 0) "White" else "Black",
+                )
+                val aiExplanation = withTimeout(4000) {
+                    moveExplainer.explain(request)
+                }
+                // Only update if still on the same move
+                if (_currentMoveIndex.value == index + 1) {
+                    _feedback.value = _feedback.value?.copy(
+                        explanation = aiExplanation
+                    )
+                }
+            } catch (e: Exception) {
+                // Deterministic insight already shown — silent fallback
+            } finally {
+                _explanationLoading.value = false
+            }
         }
     }
 
-    fun previousMove() {
-        if (_currentMoveIndex.value > 0 && !_isPlaying.value) {
-            val prevIndex = _currentMoveIndex.value - 1
-            val move = _movesToSimulate[prevIndex]
 
-            Log.d(TAG, "previousMove: reverting move at index $prevIndex: $move")
-            move.to.chessPiece = move.from.chessPiece
-            move.from.chessPiece = null
-            game.undoMove(move, game.board)
+    private fun applyReviewMove(move: com.example.chess.data.model.Move) {
+        val piece = move.pieceMoved ?: return
+        val fromBox = game.board.getBox(move.from.position.row, move.from.position.column)
+        val toBox = game.board.getBox(move.to.position.row, move.to.position.column)
 
-            val tactic = _analysisResult.value?.tactics?.getOrNull(_currentMoveIndex.value)
-            val sanMove = _movesToSimulateSAN[prevIndex]
-            val category = _analysisResult.value?.moveCategories?.getOrNull(prevIndex)
-            val bestMove = _analysisResult.value?.bestMoves?.getOrNull(prevIndex)
-            val captureOpportunity = _analysisResult.value?.captureOpportunity?.getOrNull(prevIndex)
-            val missedMate = _analysisResult.value?.missedMates?.getOrNull(prevIndex)?.mateInBefore
-            val matingPiece =
-                _analysisResult.value?.missedMates?.getOrNull(prevIndex)?.moveObject?.pieceMoved
-            _feedback.value = createFeedbackForMove(
-                sanMove,
-                category.toString(),
-                bestMove,
-                captureOpportunity?.target.toString(),
-                missedMate,
-                matingPiece,
-                tactic
-            )
-            _currentMoveCategory.value = category
+        when {
+            move.isCastlingMove -> {
+                (piece as? com.example.chess.data.model.King)
+                    ?.castlingMove(fromBox, toBox, game.board)
+            }
 
-            _currentMoveIndex.value = prevIndex
-
-            _boardState.value = _boardState.value.copy(
-                board = game.board.clone(),
-                currentPlayer = game.currentTurn.value,
-                gameStatus = game.status,
-            )
-            game.changeCurrentTurn()
-        } else {
-            Log.e(TAG, "previousMove: Cannot revert move (either index too low or playing)")
+            else -> {
+                fromBox.chessPiece = null
+                toBox.chessPiece = piece
+                piece.position = toBox.position
+            }
         }
+
+        // Advance turn manually
+        game.changeCurrentTurn()
     }
 
+    // Clean move undo for review — never mutates the move object
+    private fun undoReviewMove(move: com.example.chess.data.model.Move) {
+        val fromBox = game.board.getBox(move.from.position.row, move.from.position.column)
+        val toBox = game.board.getBox(move.to.position.row, move.to.position.column)
+
+        when {
+            move.isCastlingMove -> {
+                // Reverse castling
+                game.undoMove(move, game.board)
+            }
+
+            else -> {
+                // Restore pieces to original squares
+                fromBox.chessPiece = move.pieceMoved
+                move.pieceMoved?.position = fromBox.position
+                toBox.chessPiece = move.pieceKilled  // restores captured piece if any
+            }
+        }
+
+        game.changeCurrentTurn()
+    }
+
+    fun launchNextMove() {
+        viewModelScope.launch(Dispatchers.Main) { nextMove() }
+    }
+
+    fun launchPreviousMove() {
+        viewModelScope.launch(Dispatchers.Main) { previousMove() }
+    }
 
     fun startAutoReview() {
         autoReviewJob?.cancel()
         _isPlaying.value = true
-        autoReviewJob = viewModelScope.launch {
+        autoReviewJob = viewModelScope.launch(Dispatchers.Main) {
             while (_currentMoveIndex.value < _movesToSimulate.size) {
                 if (!_isPlaying.value) break
-
-                Log.d(
-                    TAG,
-                    "startAutoReview: index is ${_currentMoveIndex.value} total size is ${_movesToSimulate.size}"
-                )
-                Log.d(TAG, "startAutoReview: current turn is ${game.currentTurn.value}")
-
                 nextMove()
-                val delayTime = if (_currentMoveCategory.value in listOf(
-                        "Brilliant",
-                        "Mistake",
-                        "Blunder"
-                    )
+                val displayTime = if (_currentMoveCategory.value in
+                    listOf("Brilliant", "Mistake", "Blunder")
                 ) 5000L else 3000L
-                delay(delayTime)
+                delay(displayTime)  // 450ms matches the animation duration
             }
             _isPlaying.value = false
-            Log.d(TAG, "startAutoReview: boardState is ${game.board.boxes}")
         }
     }
-
 
     fun onPlayPause() {
         if (_isPlaying.value) {
@@ -620,46 +822,69 @@ class ChessGameViewModel @Inject constructor(
     }
 
     fun undoMove() {
-        if (game.movesPlayed.isNotEmpty()) {
-            Log.d(TAG, "undoMove: movesMadeAre: ${game.movesPlayed}")
-            if (playerWhite.playerType == PlayerType.AI || playerDark.playerType == PlayerType.AI) {
+        if (game.movesPlayed.isEmpty()) return
+        Log.d(TAG, "undoMove: movesMade are: ${game.movesPlayed}")
+
+        if (playerWhite.playerType == PlayerType.AI || playerDark.playerType == PlayerType.AI) {
+            // Undo both AI move and player move together
+            if (game.movesPlayed.isNotEmpty()) {
                 game.undoMoveByPlayer(game.movesPlayed.last())
-                game.undoMoveByPlayer(game.movesPlayed.last())
-            } else {
-                game.undoMoveByPlayer(game.movesPlayed.last())
-                val turn = if (game.currentTurn.value == playerDark) playerWhite else playerDark
-                game.currentTurn.value = turn
             }
-            val updatedBoard = game.board.clone()
-            _piecesKilled.value = game.piecesKilled.toMutableList()
-            _movesMadeSAN.value = game.convertMovesToSANNotation(game.movesPlayed)
-            Log.d(TAG, "undoMove: ${_piecesKilled.value}")
-            _boardState.value =
-                _boardState.value.copy(board = updatedBoard, currentPlayer = game.currentTurn.value)
+            if (game.movesPlayed.isNotEmpty()) {
+                game.undoMoveByPlayer(game.movesPlayed.last())
+            }
+            // After undoing 2 moves turn is back to the human player — no manual switch needed
+        } else {
+            game.undoMoveByPlayer(game.movesPlayed.last())
+            // Switch turn back to the player who just had their move undone
+            game.changeCurrentTurn()
         }
+
+        syncAfterBoardChange()
     }
 
     fun redoMove() {
-        if (game.movesUndone.isNotEmpty()) {
-            Log.d(
-                TAG,
-                "redoMove: movesUndone are: ${game.movesUndone}: total number is: ${game.movesUndone.size}"
-            )
-            if (playerWhite.playerType == PlayerType.AI || playerDark.playerType == PlayerType.AI) {
-                game.redoMove(game.movesUndone.last(), game.board)
-                game.currentTurn.value =
-                    if (game.currentTurn.value == playerDark) playerWhite else playerDark
-                game.redoMove(game.movesUndone.last(), game.board)
-                game.currentTurn.value =
-                    if (game.currentTurn.value == playerDark) playerWhite else playerDark
-            } else {
+        if (game.movesUndone.isEmpty()) return
+        Log.d(TAG, "redoMove: movesUndone are: ${game.movesUndone}")
+
+        if (playerWhite.playerType == PlayerType.AI || playerDark.playerType == PlayerType.AI) {
+            // Redo player move — makeMove inside redoMove handles turn switch
+            game.redoMove(game.movesUndone.last(), game.board)
+            // Redo AI move if available
+            if (game.movesUndone.isNotEmpty()) {
                 game.redoMove(game.movesUndone.last(), game.board)
             }
-            _piecesKilled.value = game.piecesKilled
-            val updatedBoard = game.board.clone()
-            _boardState.value =
-                _boardState.value.copy(board = updatedBoard, currentPlayer = game.currentTurn.value)
+            // makeMove already called changeCurrentTurn twice — turn is correct
+        } else {
+            game.redoMove(game.movesUndone.last(), game.board)
         }
+
+        syncAfterBoardChange()
+    }
+
+    // Single source of truth for post-move UI sync
+    private fun syncAfterBoardChange() {
+        val updatedBoard = game.board.clone()
+        syncVisualPiecesWithBoard(updatedBoard)
+
+        _piecesKilled.value = game.piecesKilled.toMutableList()     // snapshot, not reference
+        _movesMade.value = game.convertMovesToNotation(game.movesPlayed)
+        _movesMadeSAN.value = game.convertMovesToSANNotation(game.movesPlayed)
+        _isInCheck.value = game.currentTurn.value?.let { game.detectCheck(it) } ?: false
+
+        if (_isInCheck.value) getKingPosition()
+
+        _boardState.value = _boardState.value.copy(
+            board = updatedBoard,
+            currentPlayer = game.currentTurn.value,
+            gameStatus = game.status,
+        )
+
+        Log.d(TAG, "syncAfterBoardChange: turn is ${game.currentTurn.value}")
+    }
+
+    companion object {
+        private const val MOVE_ANIMATION_TIME = 450L
     }
 
 }
@@ -671,8 +896,8 @@ data class Move(
 )
 
 data class BoardState(
-    var board: Board?,
+    val board: Board?,
     val currentPlayer: Player?,
-    var gameStatus: GameStatus = GameStatus.ACTIVE,
-    var lastMovedFrom: Position? = Position(0, 0)
+    val gameStatus: GameStatus = GameStatus.ACTIVE,
+    val lastMovedFrom: Position? = Position(0, 0)
 )

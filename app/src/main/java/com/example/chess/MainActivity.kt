@@ -25,7 +25,6 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
 
-
         enableEdgeToEdge(
             statusBarStyle = SystemBarStyle.light(Color.TRANSPARENT, Color.TRANSPARENT),
             navigationBarStyle = SystemBarStyle.light(Color.TRANSPARENT, Color.TRANSPARENT)
@@ -48,9 +47,7 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
-
     }
-
 }
 
 @Composable

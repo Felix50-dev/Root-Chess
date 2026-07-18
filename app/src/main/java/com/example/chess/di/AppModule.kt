@@ -3,6 +3,7 @@ package com.example.chess.di
 import android.content.Context
 import com.example.chess.data.StockfishEngine
 import com.example.chess.data.model.Board
+import com.example.chess.data.remote.GeminiApi
 import com.example.chess.data.repository.GamePlay
 import dagger.Module
 import dagger.Provides
@@ -17,7 +18,11 @@ object AppModule {
 
     @Provides
     @Singleton
-    fun provideGame(board: Board, stockfishEngine: StockfishEngine, @ApplicationContext context: Context): GamePlay {
+    fun provideGame(
+        board: Board,
+        stockfishEngine: StockfishEngine,
+        @ApplicationContext context: Context
+    ): GamePlay {
         return GamePlay(board, stockfishEngine)
     }
 
@@ -32,5 +37,9 @@ object AppModule {
     fun createStockfishEngine(): StockfishEngine {
         return StockfishEngine()
     }
+
+    @Provides
+    @Singleton
+    fun provideGeminiApi(): GeminiApi = GeminiApi()
 
 }

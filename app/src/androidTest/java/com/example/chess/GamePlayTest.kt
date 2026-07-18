@@ -26,11 +26,11 @@ class GamePlayTest {
         whitePlayer = Player(true, PlayerType.HUMAN)
         blackPlayer = Player(false, PlayerType.HUMAN)
 
-        board.getBox(5, 2).chessPiece = Knight(Color.WHITE, Position(5,2), false)
+        board.getBox(5, 2).chessPiece = Knight(color = Color.WHITE, position = Position(5,2), isKilled = false)
         board.getBox(7,1).chessPiece = null
 
-        board.getBox(5,5).chessPiece = Queen(Color.WHITE, Position(5,5), false)
-        board.getBox(1,5).chessPiece = Pawn(Color.BLACK, Position(1,5), false)
+        board.getBox(5,5).chessPiece = Queen(color = Color.WHITE, position = Position(5,5), isKilled = false)
+        board.getBox(1,5).chessPiece = Pawn(color = Color.BLACK, position = Position(1,5), isKilled = false)
     }
 
     @Test
@@ -63,7 +63,7 @@ class GamePlayTest {
     @Test
     fun testConvertToMoveObjectForPromotion() {
         // Place white pawn at e7 (row 1), moving to e8 with promotion to Queen
-        board.getBox(1, 4).chessPiece = Pawn(Color.WHITE, Position(1, 4), false)
+        board.getBox(1, 4).chessPiece = Pawn(color = Color.WHITE, position = Position(1, 4), isKilled = false)
         val moveStr = "e7e8q"
         val stockfish = StockfishEngine()
         val game = GamePlay(board, stockfish)

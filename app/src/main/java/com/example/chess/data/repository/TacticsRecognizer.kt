@@ -5,9 +5,11 @@ import com.example.chess.data.model.Bishop
 import com.example.chess.data.model.Board
 import com.example.chess.data.model.ChessPiece
 import com.example.chess.data.model.Color
+import com.example.chess.data.model.King
+import com.example.chess.data.model.Knight
 import com.example.chess.data.model.Move
+import com.example.chess.data.model.Pawn
 import com.example.chess.data.model.Player
-import com.example.chess.data.model.PlayerType
 import com.example.chess.data.model.Position
 import com.example.chess.data.model.Queen
 import com.example.chess.data.model.Rook
@@ -16,163 +18,234 @@ import kotlin.math.abs
 import kotlin.math.sign
 
 private const val TAG = "TacticsRecognizer"
+
 class TacticsRecognizer @Inject constructor(
     private val game: GamePlay
 ) {
 
+    private companion object {
+        // Forks on pawns (value=1) excluded — only tactically significant forks
+        // Change to 1 if you want to include pawn forks
+        const val MIN_FORK_TARGET_VALUE = 3
+    }
+
     fun isFork(board: Board, move: Move, player: Player): String? {
-        Log.d(TAG, "isFork: move is $move")
-
         val piece = move.pieceMoved ?: return null
+        if (piece is King) return null  // kings don't fork
 
-        // --- simulate the move ---
-        val originalFromPiece = move.from.chessPiece
-        val originalToPiece = move.to.chessPiece
+        // Simulate on tempBoard only
+        val tempBoard = board.clone()
+        tempBoard.getBox(move.from.position.row, move.from.position.column).chessPiece = null
+        tempBoard.getBox(move.to.position.row, move.to.position.column).chessPiece = piece
 
-        move.from.chessPiece = null
-        move.to.chessPiece = piece
+        // Get all squares the piece attacks from its new position
+        val attackedPieces = mutableListOf<ChessPiece>()
 
-        // now we can check attacked squares
-        val attackedSquares = game.getValidMoves(move.to.position, player,board)
-        Log.d(TAG, "isFork: attacked squares are: $attackedSquares current turn is $player")
+        for (row in 0..7) {
+            for (col in 0..7) {
+                val targetSquare = tempBoard.getBox(row, col)
+                val target = targetSquare.chessPiece ?: continue
+                if (target.color == piece.color) continue  // skip own pieces
 
-        val attackedPieces = attackedSquares.mapNotNull {
-            val target = board.getBox(it.row, it.column).chessPiece
-            Log.d(TAG, "isFork: target is: $target")
-            if (target != null && target.color != piece.color && target.value >= 3) target else null
+                val fromSpot = tempBoard.getBox(move.to.position.row, move.to.position.column)
+                if (piece.canMove(tempBoard, fromSpot, targetSquare)) {
+                    if (target.value >= MIN_FORK_TARGET_VALUE) {
+                        attackedPieces.add(target)
+                    }
+                }
+            }
         }
 
-        // --- undo the move ---
-        move.from.chessPiece = originalFromPiece
-        move.to.chessPiece = originalToPiece
+        Log.d(TAG, "isFork: attacked pieces are $attackedPieces")
 
         return if (attackedPieces.size >= 2) "Fork" else null
     }
 
 
     fun isPin(board: Board, move: Move, player: Player): String? {
-        Log.d(TAG, "isPin: move is $move")
-
         val movedPiece = move.pieceMoved ?: return null
         if (movedPiece !is Queen && movedPiece !is Rook && movedPiece !is Bishop) return null
 
+        // Simulate on tempBoard
+        val tempBoard = board.clone()
+        tempBoard.getBox(move.from.position.row, move.from.position.column).chessPiece = null
+        tempBoard.getBox(move.to.position.row, move.to.position.column).chessPiece = movedPiece
+
         val opponentColor = if (movedPiece.color == Color.WHITE) Color.BLACK else Color.WHITE
-        val kingPos = game.findKing(board, opponentColor)
+        val opponentKingSpot = game.findKing(tempBoard, opponentColor) ?: return null
 
-        // Check if the move aligns the moved piece with the opponent king
-        if (!isAligned(move.to.position, kingPos!!.position)) return null
-        Log.d(TAG, "isPin: passed this point")
+        // Attacker destination must be aligned with opponent king
+        if (!isAligned(move.to.position, opponentKingSpot.position)) return null
 
-        val betweenSquares = squaresBetween(move.to.position, kingPos.position)
-        Log.d(TAG, "isPin: between squares are $betweenSquares")
+        // Squares between attacker destination and king
+        val betweenSquares = squaresBetween(move.to.position, opponentKingSpot.position)
+
+        // Collect pieces between attacker and king
         val blockingPieces = betweenSquares.mapNotNull { sq ->
-            val piece = board.getBox(sq.row, sq.column).chessPiece
-            Log.d(TAG, "isPin: piece is $piece")
-            if (piece != null && piece.color == opponentColor) piece else null
+            tempBoard.getBox(sq.row, sq.column).chessPiece
         }
 
-        return if (blockingPieces.size == 1) "Pin" else null
+        // Must be exactly ONE opponent piece between attacker and king
+        if (blockingPieces.size != 1) return null
+        val pinnedPiece = blockingPieces.first()
+        if (pinnedPiece.color == movedPiece.color) return null
+
+        // Pin verification — simply remove the pinned piece and check
+        // if attacker can reach king directly
+        val verifyBoard = tempBoard.clone()
+        verifyBoard.getBox(
+            pinnedPiece.position.row,
+            pinnedPiece.position.column
+        ).chessPiece = null
+
+        val attackerSpot = verifyBoard.getBox(
+            move.to.position.row,
+            move.to.position.column
+        )
+        val kingSpot = verifyBoard.getBox(
+            opponentKingSpot.position.row,
+            opponentKingSpot.position.column
+        )
+
+        // If attacker can reach king when pinned piece is removed — it's a real pin
+        return if (movedPiece.canMove(verifyBoard, attackerSpot, kingSpot)) "Pin" else null
     }
 
     fun isDiscoveredCheck(board: Board, move: Move, player: Player): String? {
-        Log.d(TAG, "isDiscoveredCheck: move is: $move")
+        val piece = move.pieceMoved ?: return null
+
+        // Simulate on tempBoard
         val tempBoard = board.clone()
-        val beforeAttackers = attackersToOpponentKing(tempBoard, player).toSet()
-        Log.d(TAG, "isDiscoveredCheck: before attackers are: $beforeAttackers")
-        Log.d(TAG, "isDiscoveredCheck: board state is: ${tempBoard.getBox(2,2)} ${tempBoard.getBox(3,1)} ${tempBoard.getBox(0,4)}")
+        tempBoard.getBox(move.from.position.row, move.from.position.column).chessPiece = null
+        tempBoard.getBox(move.to.position.row, move.to.position.column).chessPiece = piece
 
-        // --- Simulate the move ---
-        val fromSpot = tempBoard.getBox(move.from.position.row, move.from.position.column)
-        val toSpot = tempBoard.getBox(move.to.position.row, move.to.position.column)
+        // Use a pre-move board that still has moving piece removed from origin
+        // so path-blocking is evaluated correctly in both states
+        val preMoveBoard = board.clone()
+        preMoveBoard.getBox(move.from.position.row, move.from.position.column).chessPiece = null
 
-        val movingPiece = move.pieceMoved ?: return null
-        val capturedPiece = toSpot.chessPiece // might be null
+        val beforeAttackerIds = attackersToOpponentKing(preMoveBoard, player)
+            .map { it.id }
+            .toSet()
+        Log.d(TAG, "isDiscoveredCheck: beforeAttackerIds: $beforeAttackerIds")
 
-        // apply move
-        fromSpot.chessPiece = null
-        toSpot.chessPiece = movingPiece
-        movingPiece.position = move.to.position
+        val afterAttackers = attackersToOpponentKing(tempBoard, player)
+        Log.d(TAG, "isDiscoveredCheck: afterAttackers: $afterAttackers")
 
-        Log.d(TAG, "isDiscoveredCheck: simulated board state = from:$fromSpot to:$toSpot")
-        Log.d(TAG, "isDiscoveredCheck: board state is: ${tempBoard.getBox(2,2)} ${tempBoard.getBox(3,1)} ${tempBoard.getBox(0,4)}")
-
-        val afterAttackers = attackersToOpponentKing(tempBoard, player).toSet()
-        Log.d(TAG, "isDiscoveredCheck: after attackers are: $afterAttackers")
-
-        // Exclude the moving piece itself — if it attacks king, that’s just check, not discovered check
-        val newAttackers = (afterAttackers - beforeAttackers).filter { it != move.pieceMoved }
-        Log.d(TAG, "isDiscoveredCheck: newAttackers are: $newAttackers")
+        // New attackers = pieces attacking king after move that weren't before
+        // Exclude the moving piece itself — that's just a regular check
+        val newAttackers = afterAttackers.filter { afterPiece ->
+            afterPiece.id !in beforeAttackerIds && afterPiece.id != piece.id
+        }
+        Log.d(TAG, "isDiscoveredCheck: newAttackers: $newAttackers")
 
         return if (newAttackers.isNotEmpty()) "Discovered Check" else null
     }
 
+    private fun attackersToOpponentKing(board: Board, player: Player): List<ChessPiece> {
+        val opponentColor = if (player.isWhite) Color.BLACK else Color.WHITE
+        val kingSpot = game.findKing(board, opponentColor) ?: return emptyList()
+        val kingPos = kingSpot.position
+
+        return game.getAlivePieces(player, board).filter { piece ->
+            val fromSpot = board.getBox(piece.position.row, piece.position.column)
+            val toSpot = board.getBox(kingPos.row, kingPos.column)
+            piece.canMove(board, fromSpot, toSpot)
+        }
+    }
 
     fun isSkewer(board: Board, move: Move): String? {
-        if (!game.makeMove(board, move, game.currentTurn.value!!)) return null
+        val piece = move.pieceMoved ?: return null
+        if (piece !is Rook && piece !is Bishop && piece !is Queen) return null
 
-        val movedPiece = move.pieceMoved ?: return null
-        if (movedPiece.value !in listOf(5, 3, 9)) return null
+        // Simulate entirely on tempBoard
+        val tempBoard = board.clone()
+        tempBoard.getBox(move.from.position.row, move.from.position.column).chessPiece = null
+        tempBoard.getBox(move.to.position.row, move.to.position.column).chessPiece = piece
 
-        val opponentColor = if (movedPiece.color == Color.WHITE) Color.BLACK else Color.WHITE
-        val direction = directionBetween(move.from.position, move.to.position) ?: return null
+        // Only check directions valid for the piece type
+        val directions = when (piece) {
+            is Rook -> listOf(
+                Pair(1, 0), Pair(-1, 0), Pair(0, 1), Pair(0, -1)
+            )
+            is Bishop -> listOf(
+                Pair(1, 1), Pair(1, -1), Pair(-1, 1), Pair(-1, -1)
+            )
+            is Queen -> listOf(
+                Pair(1, 0), Pair(-1, 0), Pair(0, 1), Pair(0, -1),
+                Pair(1, 1), Pair(1, -1), Pair(-1, 1), Pair(-1, -1)
+            )
+            else -> return null
+        }
 
-        // From the move's destination, trace forward in the same direction
-        var current = move.to.position
-        var firstPiece: ChessPiece? = null
-        var secondPiece: ChessPiece? = null
+        for ((dr, dc) in directions) {
+            var r = move.to.position.row + dr
+            var c = move.to.position.column + dc
 
-        while (true) {
-            current = current.next(direction) ?: break
-            val piece = board.getBox(current.row, current.column).chessPiece ?: continue
+            var firstPiece: ChessPiece? = null
+            var secondPiece: ChessPiece? = null
 
-            if (piece.color != opponentColor) break
+            while (r in 0..7 && c in 0..7) {
+                val sqPiece = tempBoard.getBox(r, c).chessPiece  // ← use tempBoard
+                if (sqPiece != null) {
+                    if (sqPiece.color == piece.color) break
 
-            if (firstPiece == null) {
-                firstPiece = piece
-            } else {
-                secondPiece = piece
-                break
+                    if (firstPiece == null) {
+                        firstPiece = sqPiece
+                    } else {
+                        secondPiece = sqPiece
+                        break
+                    }
+                }
+                r += dr
+                c += dc
+            }
+
+            if (firstPiece != null && secondPiece != null &&
+                pieceValue(firstPiece) > pieceValue(secondPiece)
+            ) {
+                return "Skewer"
             }
         }
 
-        // Skewer = stronger piece in front, weaker piece behind
-        return if (firstPiece != null && secondPiece != null && firstPiece.value > secondPiece.value) {
-            "Skewer"
-        } else null
+        return null
+        // No undo needed — tempBoard is a clone
     }
 
-    fun isDoubleCheck(board: Board, move: Move): String? {
-        val opponentColor = if (move.pieceMoved!!.color == Color.WHITE) Color.BLACK else Color.WHITE
-        val kingPos = game.findKing(board, opponentColor)?.position ?: return null
-        Log.d(TAG, "isDoubleCheck: king is at position: $kingPos")
-
-        // Step 2: Get all attacking pieces after the move
-        val attackers = game.getAlivePieces(Player(move.pieceMoved.color == Color.WHITE, PlayerType.HUMAN), board)
-            .filter { piece ->
-                val targets = game.getRemainingValidMoves(piece.position, Player(move.pieceMoved.color == Color.WHITE, PlayerType.HUMAN), board)
-                kingPos in targets
-            }
-
-        // Step 3: Double check = exactly 2 pieces giving check
-        return if (attackers.size == 2) "Double Check" else null
-    }
-
-
-    private fun directionBetween(from: Position, to: Position): Pair<Int, Int>? {
-        val dRow = to.row - from.row
-        val dCol = to.column - from.column
-
-        val stepRow = dRow.sign
-        val stepCol = dCol.sign
-
-        return when {
-            dRow == 0 -> Pair(0, stepCol)                     // Horizontal
-            dCol == 0 -> Pair(stepRow, 0)                     // Vertical
-            abs(dRow) == abs(dCol) -> Pair(stepRow, stepCol) // Diagonal
-            else -> null                                      // Not aligned
+    private fun pieceValue(piece: ChessPiece): Int {
+        return when (piece) {
+            is King -> 1000
+            is Queen -> 9
+            is Rook -> 5
+            is Bishop, is Knight -> 3
+            is Pawn -> 1
         }
     }
 
+    fun isDoubleCheck(board: Board, move: Move, player: Player): String? {
+        val piece = move.pieceMoved ?: return null
+
+        // Simulate entirely on tempBoard
+        val tempBoard = board.clone()
+        tempBoard.getBox(move.from.position.row, move.from.position.column).chessPiece = null
+        tempBoard.getBox(move.to.position.row, move.to.position.column).chessPiece = piece
+
+        val opponentColor = if (player.isWhite) Color.BLACK else Color.WHITE
+        val kingPos = game.findKing(tempBoard, opponentColor)?.position ?: return null
+
+        // Count how many player pieces attack the king after the move
+        val attackers = game.getAlivePieces(player, tempBoard)
+            .filter { attackingPiece ->
+                val from = tempBoard.getBox(attackingPiece.position.row, attackingPiece.position.column)
+                val kingSpot = tempBoard.getBox(kingPos.row, kingPos.column)
+                attackingPiece.canMove(tempBoard, from, kingSpot)  // use canMove directly, no side effects
+            }
+
+        Log.d(TAG, "isDoubleCheck: attackers are $attackers")
+
+        // No need to undo — tempBoard is a clone
+        return if (attackers.size >= 2) "Double Check" else null
+    }
 
 
     private fun squaresBetween(a: Position, b: Position): List<Position> {
@@ -201,21 +274,6 @@ class TacticsRecognizer @Inject constructor(
         }
 
         return squares
-    }
-
-    private fun attackersToOpponentKing(board: Board, player: Player): List<ChessPiece> {
-        val attackers = mutableListOf<ChessPiece>()
-        val opponentColor = if (player.isWhite) Color.BLACK else Color.WHITE
-        val kingSpot = game.findKing(board, opponentColor)
-        val kingPos = kingSpot?.position
-        val playerPieces = game.getAlivePieces(player, board)
-        for (piece in playerPieces) {
-            val validPositions = game.getRemainingValidMoves(piece.position, player, board)
-            if (kingPos in validPositions) {
-                attackers.add(piece)
-            }
-        }
-        return attackers
     }
 
     private fun isAligned(a: Position, b: Position): Boolean {

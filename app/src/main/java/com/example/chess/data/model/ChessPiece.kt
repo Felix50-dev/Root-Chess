@@ -2,19 +2,19 @@ package com.example.chess.data.model
 
 import android.util.Log
 import com.example.chess.R
+import java.util.UUID
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
-
 private const val TAG = "ChessPiece"
 
 sealed class ChessPiece(
+    val id: String = UUID.randomUUID().toString(),
     val color: Color,
     var position: Position,
     var isKilled: Boolean,
     val vectorAsset: Int,
     var hasMoved: Boolean = false,
-    var canEnPassant: Boolean = false,
     val value: Int = 0
 ) {
     abstract fun canMove(board: Board, start: Spot, end: Spot): Boolean
@@ -28,20 +28,20 @@ sealed class ChessPiece(
             is Queen -> "Queen"
             is King -> "King"
         }
-        return "${color.name} $pieceName"
+        return "${color.name} $pieceName $id"
     }
 }
 
 class Pawn(
+    id: String = UUID.randomUUID().toString(),
     color: Color,
     position: Position,
     isKilled: Boolean,
     vectorAsset: Int = if (color == Color.WHITE) R.drawable.pawn_white else R.drawable.pawn_dark,
     hasMoved: Boolean = false,
-    canEnPassant: Boolean = false,
     value: Int = 1,
 ) :
-    ChessPiece(color, position, isKilled, vectorAsset, hasMoved, canEnPassant, value) {
+    ChessPiece(id,color, position, isKilled, vectorAsset, hasMoved, value) {
     override fun canMove(board: Board, start: Spot, end: Spot): Boolean {
         val rowDiff = end.position.row - start.position.row
         val colDiff = end.position.column - start.position.column
@@ -51,7 +51,6 @@ class Pawn(
 
         // Regular move: one square forward
         if (colDiff == 0 && rowDiff == direction && isEmpty(end)) {
-            this.canEnPassant = false
             return true
         }
 
@@ -64,19 +63,16 @@ class Pawn(
 
             // Check if both intermediate and end spots are empty
             if (isEmpty(intermediateSpot) && isEmpty(endSpot)) {
-                this.canEnPassant = true
                 return true
             }
         }
 
         // Capture move: one square diagonally forward to capture opponent's piece
         if (rowDiff == direction && abs(colDiff) == 1 && !isEmpty(end) && end.chessPiece!!.color != color) {
-            this.canEnPassant = false
             return true
         }
 
         if (isEnPassant(board, start, end)) {
-            this.canEnPassant = false
             return true
         }
 
@@ -127,20 +123,11 @@ class Pawn(
         val colDiff = abs(end.position.column - start.position.column)
         val direction = if (color == Color.WHITE) -1 else 1
 
-        // Check if the move is a diagonal move of one square
-        if (colDiff == 1 && rowDiff == direction) {
-            val adjacentSpot = board.getBox(start.position.row, end.position.column)
-            val adjacentPawn = adjacentSpot.chessPiece as? Pawn
-
-            if (adjacentPawn != null && adjacentPawn.color != color) {
-                // Check if the adjacent pawn just moved two squares forward
-                Log.d(
-                    TAG,
-                    "adjacentPawn color is : ${adjacentPawn.color} position is: ${adjacentPawn.position}"
-                )
-                Log.d(TAG, "can EnPassant: ${adjacentPawn.canEnPassant}")
-                return adjacentPawn.canEnPassant
-            }
+        // A diagonal move of one square, landing on an empty square, onto the board's
+        // currently tracked en passant target (set by the opponent's last two-square
+        // pawn push and cleared after any other move — see Board.enPassantTarget).
+        if (colDiff == 1 && rowDiff == direction && end.chessPiece == null) {
+            return board.enPassantTarget == end.position
         }
         return false
     }
@@ -157,15 +144,15 @@ class Pawn(
 
 
 class Rook(
+    id: String = UUID.randomUUID().toString(),
     color: Color,
     position: Position,
     isKilled: Boolean,
     vectorAsset: Int = if (color == Color.WHITE) R.drawable.rook_white else R.drawable.rook_dark,
     hasMoved: Boolean = false,
-    canEnPassant: Boolean = false,
     value: Int = 5
 ) :
-    ChessPiece(color, position, isKilled, vectorAsset, hasMoved, canEnPassant, value ) {
+    ChessPiece(id,color, position, isKilled, vectorAsset, hasMoved, value) {
     override fun canMove(board: Board, start: Spot, end: Spot): Boolean {
 
         if (end.chessPiece?.color == this.color) {
@@ -211,15 +198,15 @@ class Rook(
 }
 
 class Knight(
+    id: String = UUID.randomUUID().toString(),
     color: Color,
     position: Position,
     isKilled: Boolean,
     vectorAsset: Int = if (color == Color.WHITE) R.drawable.knight_white else R.drawable.knight_dark,
     hasMoved: Boolean = false,
-    canEnPassant: Boolean = false,
     value: Int = 3
 ) :
-    ChessPiece(color, position, isKilled, vectorAsset, hasMoved, canEnPassant, value) {
+    ChessPiece(id,color, position, isKilled, vectorAsset, hasMoved, value) {
     override fun canMove(board: Board, start: Spot, end: Spot): Boolean {
         val rowDiff = abs(end.position.row - start.position.row)
         val colDiff = abs(end.position.column - start.position.column)
@@ -235,15 +222,15 @@ class Knight(
 }
 
 class Bishop(
+    id: String = UUID.randomUUID().toString(),
     color: Color,
     position: Position,
     isKilled: Boolean,
     vectorAsset: Int = if (color == Color.WHITE) R.drawable.bishop_white else R.drawable.bishop_dark,
     hasMoved: Boolean = false,
-    canEnPassant: Boolean = false,
     value: Int = 3
 ) :
-    ChessPiece(color, position, isKilled, vectorAsset, hasMoved, canEnPassant, value) {
+    ChessPiece(id,color, position, isKilled, vectorAsset, hasMoved, value) {
     override fun canMove(board: Board, start: Spot, end: Spot): Boolean {
 
         if (end.chessPiece?.color == this.color) {
@@ -298,15 +285,15 @@ class Bishop(
 }
 
 class Queen(
+    id: String = UUID.randomUUID().toString(),
     color: Color,
     position: Position,
     isKilled: Boolean,
     vectorAsset: Int = if (color == Color.WHITE) R.drawable.queen_white else R.drawable.queen_dark,
     hasMoved: Boolean = false,
-    canEnPassant: Boolean = false,
     value: Int = 9
 ) :
-    ChessPiece(color, position, isKilled, vectorAsset, hasMoved, canEnPassant, value) {
+    ChessPiece(id,color, position, isKilled, vectorAsset, hasMoved, value) {
 
     override fun canMove(board: Board, start: Spot, end: Spot): Boolean {
 
@@ -372,16 +359,16 @@ class Queen(
 }
 
 class King(
+    id: String = UUID.randomUUID().toString(),
     color: Color,
     position: Position,
     isKilled: Boolean,
     vectorAsset: Int = if (color == Color.WHITE) R.drawable.king_white else R.drawable.king_dark,
     hasMoved: Boolean = false,
-    canEnPassant: Boolean = false,
     value: Int = 100
 
 ) :
-    ChessPiece(color, position, isKilled, vectorAsset, hasMoved, canEnPassant, value) {
+    ChessPiece(id,color, position, isKilled, vectorAsset, hasMoved, value) {
     override fun canMove(board: Board, start: Spot, end: Spot): Boolean {
         val rowDiff = abs(end.position.row - start.position.row)
         val columnDiff = abs(end.position.column - start.position.column)
@@ -398,81 +385,100 @@ class King(
     }
 
     fun canCastle(start: Spot, end: Spot, board: Board): Boolean {
+        val colDiff = end.position.column - start.position.column
         val rowDiff = abs(end.position.row - start.position.row)
-        val colDiff = (end.position.column - start.position.column)
 
-        if (colDiff == 2 && rowDiff == 0) { // King-side castling
-            // Ensure the king and rook haven't moved
-            val kingSideRookSpot = board.getBox(start.position.row, Board.NUM_COLUMNS - 1)
-            val kingSideRook = kingSideRookSpot.chessPiece as? Rook ?: return false
-            if (hasMoved || kingSideRook.hasMoved) {
-                return false
-            }
-            // Ensure the squares between the king and rook are empty
-            for (col in (start.position.column + 1) until (end.position.column + 1)) {
-                val intermediateSpot = board.getBox(start.position.row, col)
-                if (!isEmpty(intermediateSpot)) {
-                    return false
-                }
+        if (rowDiff != 0) return false
+        if (hasMoved) return false
+        if (abs(colDiff) != 2) return false
+
+        val opponentColor = if (color == Color.WHITE) Color.BLACK else Color.WHITE
+
+        if (colDiff == 2) {
+            val rookSpot = board.getBox(start.position.row, Board.NUM_COLUMNS - 1)
+            val rook = rookSpot.chessPiece as? Rook ?: return false
+            if (rook.hasMoved) return false
+            if (rook.color != color) return false
+
+            for (col in (start.position.column + 1) until rookSpot.position.column) {
+                if (board.getBox(start.position.row, col).chessPiece != null) return false
             }
 
-            val color = if (color == Color.WHITE) Color.BLACK else Color.WHITE
-            // Ensure the king is not in check and squares the king moves through are not under attack
-            return if (!(isCheck(board, color) || isUnderAttack(board, start.position, color))) {
-                true
-            } else {
-                false
-            }
+            return isCastlePathSafe(
+                board = board,
+                row = start.position.row,
+                columns = start.position.column..end.position.column,
+                opponentColor = opponentColor
+            )
         }
-        if (colDiff == -2 && rowDiff == 0) { // Queen-side castling
-            // Implement similar logic for queen-side castling
-            // Ensure the king and rook haven't moved
-            val queenSideRookSpot = board.getBox(start.position.row, 0)
-            val queenSideRook = queenSideRookSpot.chessPiece as? Rook
-            if (queenSideRook?.hasMoved == true || hasMoved) {
-                return false
+
+        if (colDiff == -2) {
+            val rookSpot = board.getBox(start.position.row, 0)
+            val rook = rookSpot.chessPiece as? Rook ?: return false
+            if (rook.hasMoved) return false
+            if (rook.color != color) return false
+
+            for (col in (rookSpot.position.column + 1) until start.position.column) {
+                if (board.getBox(start.position.row, col).chessPiece != null) return false
             }
-            // Ensure the squares between the king and rook are empty
-            for (col in (end.position.column - 1 ) until  (start.position.column)) {
-                val intermediateSpot = board.getBox(start.position.row, col)
-                if (!isEmpty(intermediateSpot)) {
-                    return false
-                }
-            }
-            // Ensure the king is not in check and squares the king moves through are not under attack
-            val color = if (color == Color.WHITE) Color.BLACK else Color.WHITE
-            return !isCheck(board, color) && !isUnderAttack(board, start.position, color)
+
+            return isCastlePathSafe(
+                board = board,
+                row = start.position.row,
+                columns = end.position.column..start.position.column,
+                opponentColor = opponentColor
+            )
         }
+
         return false
     }
 
+    private fun isCastlePathSafe(
+        board: Board,
+        row: Int,
+        columns: IntProgression,
+        opponentColor: Color
+    ): Boolean {
+        if (isCheck(board, opponentColor)) return false
+        return columns.none { col ->
+            isUnderAttack(board, Position(row, col), opponentColor)
+        }
+    }
+
     fun castlingMove(start: Spot, end: Spot, board: Board) {
-        val rowDiff = abs(end.position.row - start.position.row)
-        val colDiff = (end.position.column - start.position.column)
+        val colDiff = end.position.column - start.position.column
 
-        val kingSideRookSpot = board.getBox(start.position.row, Board.NUM_COLUMNS - 1)
-        val queenSideRookSpot = board.getBox(start.position.row, 0)
-        val queenSideRook = queenSideRookSpot.chessPiece as? Rook
-        val kingSideRook = kingSideRookSpot.chessPiece as? Rook
-
-        if (colDiff == 2 && rowDiff == 0) {
-            // Move the king
-            end.chessPiece = this
-            start.chessPiece = null
-            // Move the rook
+        if (colDiff == 2) {
+            // ── King-side ─────────────────────────────────────────────────────────
             val rookStart = board.getBox(start.position.row, Board.NUM_COLUMNS - 1)
-            val rookEnd = board.getBox(start.position.row, start.position.column + 1)
-            rookEnd.chessPiece = kingSideRook
-            rookStart.chessPiece = null
-        } else {
-            // Move the king
-            end.chessPiece = this
+            val rook = rookStart.chessPiece as? Rook ?: return
+
+            // Move king: e1 → g1  (col 4 → col 6)
+            end.chessPiece   = this
             start.chessPiece = null
-            // Move the rook
-            val rookStart = board.getBox(start.position.row, 0)
-            val rookEnd = board.getBox(start.position.row, start.position.column - 1)
-            rookEnd.chessPiece = queenSideRook
+            this.position    = end.position
+
+            // Move rook: h1 → f1  (col 7 → col 5)
+            val rookEnd = board.getBox(start.position.row, start.position.column + 1)
+            rookEnd.chessPiece   = rook
             rookStart.chessPiece = null
+            rook.position        = rookEnd.position
+
+        } else if (colDiff == -2) {
+            // ── Queen-side ────────────────────────────────────────────────────────
+            val rookStart = board.getBox(start.position.row, 0)
+            val rook = rookStart.chessPiece as? Rook ?: return
+
+            // Move king: e1 → c1  (col 4 → col 2)
+            end.chessPiece   = this
+            start.chessPiece = null
+            this.position    = end.position
+
+            // Move rook: a1 → d1  (col 0 → col 3)
+            val rookEnd = board.getBox(start.position.row, start.position.column - 1)
+            rookEnd.chessPiece   = rook
+            rookStart.chessPiece = null
+            rook.position        = rookEnd.position
         }
     }
 
@@ -488,7 +494,7 @@ class King(
                 val spot = board.getBox(row, col)
                 val piece = spot.chessPiece
                 // Check if there is a piece on the spot and it belongs to the opponent
-                if (piece != null && piece.color != attackerColor) {
+                if (piece != null && piece.color == attackerColor) {
                     // Check if the opponent's piece can move to the target position
                     if (piece.canMove(board, spot, board.getBox(position.row, position.column))) {
                         return true // The position is under attack

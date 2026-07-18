@@ -3,6 +3,9 @@ package com.example.chess.presentation
 import android.util.Log
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.VectorConverter
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
@@ -46,7 +49,9 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -54,16 +59,21 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
@@ -79,6 +89,9 @@ import com.example.chess.data.model.Queen
 import com.example.chess.data.model.Rook
 import com.example.chess.data.model.SANMovePair
 import com.example.chess.data.model.Spot
+import com.example.chess.presentation.model.VisualPiece
+import kotlinx.coroutines.delay
+import kotlin.math.roundToInt
 
 private const val TAG = "BoardScreen"
 
@@ -98,6 +111,7 @@ fun ChessGameScreen(
     val lastMove by chessGameViewModel.lastMove.collectAsState()
     val aiLastMove by chessGameViewModel.aiLastMove.collectAsState()
     val showPawnPromotion by chessGameViewModel.showPawnPromotion.collectAsState()
+    val visualPieces by chessGameViewModel.visualPieces.collectAsState()
     Log.d(TAG, "ChessGameScreen: pieces killed are: $piecesKilled")
 
     val context = LocalContext.current
@@ -164,15 +178,28 @@ fun ChessGameScreen(
                 piecesKilled = piecesKilled,
                 movesMadeSan = movesMadeSAN,
                 showPromotionDialog = showPawnPromotion,
-                aiLastMove = aiLastMove
+                aiLastMove = aiLastMove,
+                visualPieces = visualPieces as MutableList<VisualPiece>
             )
         }
         Log.d(TAG, "ChessGameScreen last moved piece: ${boardState.lastMovedFrom}")
-        if (boardState.gameStatus == GameStatus.WHITE_WIN) {
-            checkMateDialog = true
-        }
-        if (boardState.gameStatus == GameStatus.BLACK_WIN) {
-            checkMateDialog = true
+        LaunchedEffect(boardState.gameStatus) {
+            when (boardState.gameStatus) {
+                GameStatus.WHITE_WIN,
+                GameStatus.BLACK_WIN -> {
+                    delay(300) // wait for piece animation
+                    delay(500) // dramatic pause 😎
+                    checkMateDialog = true
+                }
+
+                GameStatus.STALEMATE -> {
+                    delay(300)
+                    delay(500)
+                    staleMateDialog = true
+                }
+
+                else -> Unit
+            }
         }
         AnimatedVisibility(visible = checkMateDialog) {
             CheckmateDialog(
@@ -182,13 +209,10 @@ fun ChessGameScreen(
                     checkMateDialog = false
                 }) {
                 checkMateDialog = false
-                boardState.gameStatus = GameStatus.ACTIVE
+                chessGameViewModel.resetGameStatus()
             }
         }
         if (boardState.gameStatus == GameStatus.STALEMATE) {
-            if (boardState.gameStatus == GameStatus.STALEMATE) {
-                staleMateDialog = true
-            }
             AnimatedVisibility(visible = staleMateDialog) {
                 CheckmateDialog(
                     text = "StaleMate",
@@ -197,13 +221,12 @@ fun ChessGameScreen(
                         staleMateDialog = false
                     }) {
                     staleMateDialog = false
-                    boardState.gameStatus = GameStatus.ACTIVE
+                    chessGameViewModel.resetGameStatus()
                 }
             }
         }
     }
 }
-
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -238,9 +261,9 @@ fun PawnPromotionDialog(
                 ) {
                     PromotionOption(
                         piece = Queen(
-                            color,
-                            Position(0, 0),
-                            false,
+                            color = color,
+                            position = Position(0, 0),
+                            isKilled = false,
                             vectorAsset = if (color == com.example.chess.data.model.Color.WHITE) R.drawable.queen_white else R.drawable.queen_dark
                         ),
                         onSelected = {
@@ -252,9 +275,9 @@ fun PawnPromotionDialog(
                     )
                     PromotionOption(
                         piece = Rook(
-                            color,
-                            Position(0, 0),
-                            false,
+                            color = color,
+                            position = Position(0, 0),
+                            isKilled = false,
                             vectorAsset = if (color == com.example.chess.data.model.Color.WHITE) R.drawable.rook_white else R.drawable.rook_dark
                         ),
                         onSelected = {
@@ -266,10 +289,10 @@ fun PawnPromotionDialog(
                     )
                     PromotionOption(
                         piece = Bishop(
-                            color,
-                            Position(0, 0),
-                            false,
-                            if (color == com.example.chess.data.model.Color.WHITE) R.drawable.bishop_white else R.drawable.bishop_dark
+                            color = color,
+                            position = Position(0, 0),
+                            isKilled = false,
+                            vectorAsset = if (color == com.example.chess.data.model.Color.WHITE) R.drawable.bishop_white else R.drawable.bishop_dark
                         ),
                         onSelected = {
                             selectedOption = it
@@ -280,10 +303,10 @@ fun PawnPromotionDialog(
                     )
                     PromotionOption(
                         piece = Knight(
-                            color,
-                            Position(0, 0),
-                            false,
-                            if (color == com.example.chess.data.model.Color.WHITE) R.drawable.knight_white else R.drawable.knight_dark
+                            color = color,
+                            position = Position(0, 0),
+                            isKilled = false,
+                            vectorAsset = if (color == com.example.chess.data.model.Color.WHITE) R.drawable.knight_white else R.drawable.knight_dark
                         ),
                         onSelected = {
                             selectedOption = it
@@ -380,6 +403,19 @@ fun CheckmateDialog(
     }
 }
 
+fun positionToOffset(
+    row: Int,
+    col: Int,
+    squareSizePx: Int,
+    boardOffset: Offset
+): IntOffset {
+    return IntOffset(
+        x = (boardOffset.x + col * squareSizePx).roundToInt(),
+        y = (boardOffset.y + row * squareSizePx).roundToInt()
+    )
+}
+
+
 @Composable
 fun StartGameDialog(
     onConfirm: () -> Unit,
@@ -430,7 +466,17 @@ fun ChessGrid(
     movesMadeSan: MutableList<SANMovePair>,
     showPromotionDialog: Boolean,
     aiLastMove: Move?,
+    visualPieces: MutableList<VisualPiece>
 ) {
+
+    remember(boardState.board) {
+        boardState.board
+            ?.boxes
+            ?.flatten()
+            ?.mapNotNull { it.chessPiece }
+            ?: emptyList()
+    }
+
     val blackPiecesKilled = piecesKilled.filter {
         it.color == com.example.chess.data.model.Color.BLACK
     }
@@ -489,7 +535,6 @@ fun ChessGrid(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .zIndex(0f)
     ) {
         Image(
             painter = painterResource(id = R.drawable.chesstable),
@@ -580,29 +625,48 @@ fun ChessGrid(
                         }
                     }
                 }
-                Column {
-                    boardState.board?.boxes?.forEachIndexed { row, rowData ->
-                        Row {
-                            rowData.forEachIndexed { column, spot ->
-                                ChessSquare(
-                                    isWhite = (row + column) % 2 == 0,
-                                    spot = spot,
-                                    isInCheck = isInCheck,
-                                    checkPosition = checkPosition,
-                                    validMoves = validMoves,
-                                    onSelectSpot = { selectedSpot ->
-                                        onSelectSpot(selectedSpot)
-                                    },
-                                    onMovePieceTo = { position ->
-                                        onMovePieceTo(position)
-                                    },
-                                    squareSize = squareSize,
-                                    lastMove = lastMove,
-                                    aiLastMove = aiLastMove
-                                )
+                var boardSizePx by remember { mutableStateOf<IntSize?>(null) }
+
+                val squareSizePx = remember(boardSizePx) {
+                    boardSizePx?.width?.div(8)
+                }
+
+                squareSizePx?.let {
+                    with(LocalDensity.current) { it.toDp() }
+                }
+
+                Box(
+                    modifier = Modifier
+                        .size(squareSize * 8)
+                ) {
+                    Column {
+                        boardState.board?.boxes?.forEachIndexed { row, rowData ->
+                            Row {
+                                rowData.forEachIndexed { column, spot ->
+                                    ChessSquare(
+                                        isWhite = (row + column) % 2 == 0,
+                                        spot = spot,
+                                        isInCheck = isInCheck,
+                                        checkPosition = checkPosition,
+                                        validMoves = validMoves,
+                                        onSelectSpot = { selectedSpot ->
+                                            onSelectSpot(selectedSpot)
+                                        },
+                                        onMovePieceTo = { position ->
+                                            onMovePieceTo(position)
+                                        },
+                                        squareSize = squareSize,
+                                        lastMove = lastMove,
+                                        aiLastMove = aiLastMove
+                                    )
+                                }
                             }
                         }
                     }
+                    PiecesLayer(
+                        pieces = visualPieces,
+                        squareSize = squareSize
+                    )
                 }
             }
             Row(
@@ -707,119 +771,142 @@ fun ChessSquare(
 ) {
     val currentPosition = spot.position
     val piece = spot.chessPiece
+    val isValidMove = validMoves.contains(currentPosition)
+    val isCapturableTarget = isValidMove && piece != null
 
-    //val offset = remember { Animatable(Offset(0f, 0f), Offset.VectorConverter) }
-//    val isMoveOrigin = lastMove != null && currentPosition == lastMove.from
-//    val isMoveDestination = lastMove != null && currentPosition == lastMove.to
-
-//    LaunchedEffect(lastMove?.moveId) {
-//        if (isMoveOrigin) {
-//            val fromCol = lastMove!!.from.column - currentPosition.column
-//            val fromRow = lastMove.from.row - currentPosition.row
-//            val startOffset = Offset(
-//                x = fromCol * squareSize.value,
-//                y = fromRow * squareSize.value
-//            )
-//            val targetOffset = Offset(
-//                x = (lastMove.to.column - currentPosition.column) * squareSize.value,
-//                y = (lastMove.to.row - currentPosition.row) * squareSize.value
-//            )
-//
-//            Log.d(
-//                "ChessSquare",
-//                "Animating origin $currentPosition from ${lastMove.from} to ${lastMove.to}, startOffset: $startOffset, targetOffset: $targetOffset"
-//            )
-//
-//            offset.snapTo(startOffset)
-//            offset.animateTo(
-//                targetValue = targetOffset,
-//                animationSpec = tween(
-//                    durationMillis = 600,
-//                    easing = LinearEasing
-//                )
-//            )
-//        } else if (piece != null && !isMoveDestination) {
-//            offset.snapTo(Offset(0f, 0f))
-//        }
-//    }
-
-    val backgroundColor = when {
-        isWhite -> Color.White
-        else -> Color(0xFFA26232)
-    }
+    val backgroundColor = if (isWhite) Color.White else Color(0xFFA26232)
 
     Box(
         modifier = Modifier
             .size(squareSize)
             .background(backgroundColor)
             .clickable {
-                if (validMoves.contains(spot.position)) {
-                    onMovePieceTo(spot.position)
+                if (isValidMove) {
+                    onMovePieceTo(currentPosition)
                 } else {
                     onSelectSpot(spot)
                 }
             }
-            .zIndex(0f) // Grid square at base level
             .then(
-                if (currentPosition == lastMove?.from || currentPosition == lastMove?.to || currentPosition == aiLastMove?.from || currentPosition == aiLastMove?.to) {
+                if (
+                    currentPosition == lastMove?.from ||
+                    currentPosition == lastMove?.to ||
+                    currentPosition == aiLastMove?.from ||
+                    currentPosition == aiLastMove?.to
+                ) {
                     Modifier.background(
-                        brush = Brush.verticalGradient(
-                            colors = listOf(Color.Transparent, Color.Green.copy(alpha = 0.3f))
+                        Brush.verticalGradient(
+                            listOf(Color.Transparent, Color.Green.copy(alpha = 0.3f))
                         )
                     )
                 } else Modifier
             )
     ) {
+        // Check highlight — red border around king's square
         Box(
             modifier = Modifier
                 .matchParentSize()
                 .border(
-                    width = 3.dp,
-                    color = when {
-                        piece is King && isInCheck && spot.position == checkPosition -> Color.Red
-                        else -> Color.Transparent
-                    }
+                    3.dp,
+                    if (piece is King && isInCheck && currentPosition == checkPosition)
+                        Color.Red else Color.Transparent
                 )
-                .zIndex(1f) // Static elements slightly above grid
-        ) {
-            piece?.let { chessPiece ->
-                AnimatedChessPiece(
-                    chessPiece = chessPiece,
-                    squareSize = squareSize,
-                    //offset = if (isMoveOrigin) offset.value else Offset(0f, 0f),
-                    //modifier = Modifier.zIndex(if (isMoveOrigin) 20f else 1f) // Animating piece on top
-                )
-            }
-            if (validMoves.contains(spot.position)) {
-                Box(
-                    modifier = Modifier
-                        .size(8.dp)
-                        .background(Color.Green)
-                        .align(Alignment.Center)
-                        .zIndex(2f) // Valid move indicator at static level
-                )
-            }
+        )
+
+        // Empty square valid move — small dot in center
+        if (isValidMove && !isCapturableTarget) {
+            Box(
+                modifier = Modifier
+                    .size(12.dp)
+                    .background(
+                        color  = Color(0x8800C853),  // semi-transparent green
+                        shape  = CircleShape,
+                    )
+                    .align(Alignment.Center)
+                    .zIndex(20f)   // above pieces layer
+            )
+        }
+        if (isCapturableTarget) {
+            Box(
+                modifier = Modifier
+                    .matchParentSize()
+                    .zIndex(20f)   // above pieces layer
+                    .border(
+                        width  = 3.dp,
+                        color  = Color(0xFFFFB300),  // semi-transparent green ring
+                        shape  = CircleShape,
+                    )
+                    .padding(2.dp)  // slight inset so ring is visible
+            )
         }
     }
 }
 
 @Composable
-fun AnimatedChessPiece(
-    chessPiece: ChessPiece,
-    squareSize: Dp,
-    //offset: Offset,
-    modifier: Modifier = Modifier
-) {
-    Box(
-        modifier = modifier
-            .size(squareSize)
-        //.offset { IntOffset(offset.x.roundToInt(), offset.y.roundToInt()) }
-    ) {
-        Image(
-            painter = painterResource(chessPiece.vectorAsset),
-            contentDescription = null,
-            modifier = Modifier.matchParentSize()
+fun AnimatedChessPiece(piece: VisualPiece, squareSize: Dp) {
+    val density = LocalDensity.current
+
+    val target by remember(piece.position, squareSize) {
+        derivedStateOf {
+            with(density) {
+                Offset(
+                    piece.position.column * squareSize.toPx(),
+                    piece.position.row * squareSize.toPx()
+                )
+            }
+        }
+    }
+
+    val startOffset by remember(piece.previousPosition, squareSize) {
+        derivedStateOf {
+            with(density) {
+                val prev = piece.previousPosition ?: piece.position
+                Offset(
+                    prev.column * squareSize.toPx(),
+                    prev.row * squareSize.toPx()
+                )
+            }
+        }
+    }
+
+    val animOffset = remember(piece.id) {
+        Animatable(startOffset, Offset.VectorConverter)
+    }
+
+    LaunchedEffect(target) {
+        animOffset.animateTo(
+            target,
+            tween(
+                durationMillis = 450,
+                easing = FastOutSlowInEasing
+            )
         )
+    }
+
+    Image(
+        painter = painterResource(piece.asset),
+        contentDescription = null,
+        modifier = Modifier
+            .size(squareSize)
+            .zIndex(10f)
+            .graphicsLayer {
+                translationX = animOffset.value.x
+                translationY = animOffset.value.y
+            }
+    )
+}
+
+@Composable
+fun PiecesLayer(
+    pieces: List<VisualPiece>,
+    squareSize: Dp
+) {
+    Box(Modifier.fillMaxSize()) {
+        pieces.forEach { piece ->
+            key(piece.id) {
+                AnimatedChessPiece(piece, squareSize)
+            }
+        }
     }
 }
 

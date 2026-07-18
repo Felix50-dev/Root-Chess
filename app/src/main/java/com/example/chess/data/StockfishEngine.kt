@@ -1,6 +1,8 @@
 package com.example.chess.data
 
 import android.util.Log
+import com.example.chess.domain.model.EvalParseState
+import com.example.chess.domain.model.PositionEval
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -72,52 +74,59 @@ class StockfishEngine {
         return bestMoveDeferred.await()
     }
 
-    suspend fun getMoveScore(): Triple<Int, String, Int> {
-        val evaluationDeferred = CompletableDeferred<Triple<Int, String, Int>>()
-        val mateRegex = Regex("score mate (-?\\d+)")
-        var mateIn = 0
-
-        withContext(Dispatchers.IO) {
-            process?.let { p ->
-                val reader = BufferedReader(InputStreamReader(p.inputStream))
-                try {
-                    var line: String?
-                    var bestEvaluation: Int? = null
-                    val bestMove: String?  // FIXED: use var instead of val
-
-                    while (reader.readLine().also { line = it } != null) {
-                        Log.d("Stockfish", "Stockfish Output: $line")
-
-                        if (line!!.startsWith("info depth")) {
-                            Regex("score cp (-?\\d+)").find(line!!)?.let {
-                                bestEvaluation = it.groupValues[1].toInt()
-                                Log.d("Stockfish", "Evaluation: $bestEvaluation")
-                            }
-                            mateRegex.find(line!!)?.let {
-                                mateIn = it.groupValues[1].toInt()
-                                Log.d("Stockfish", "Mate in: $mateIn")
-                            }
-                        }
-
-                        if (line!!.startsWith("bestmove")) {
-                            bestMove = line!!.split(" ")[1]
-                            evaluationDeferred.complete(
-                                Triple(bestEvaluation ?: 0, bestMove ?: "", mateIn)
-                            )
-                            break
-                        }
-                    }
-                } catch (e: IOException) {
-                    e.printStackTrace()
-                    evaluationDeferred.complete(Triple(0, "", 0))
-                }
+    suspend fun getDetailedEval(): PositionEval = withContext(Dispatchers.IO) {
+        val state = EvalParseState()
+        process?.let { p ->
+            val reader = BufferedReader(InputStreamReader(p.inputStream))
+            var line: String?
+            while (reader.readLine().also { line = it } != null) {
+                parseLine(line!!, state)       // ← parse as it streams, no list
+                if (state.done) break          // ← stop immediately on bestmove
             }
         }
-
-        return evaluationDeferred.await()
+        PositionEval(state.score, state.bestMove, state.mateIn, state.pv, state.depth)
     }
 
+    fun parseLine(line: String, state: EvalParseState) {
+        if (line.startsWith("info depth")) {
+            Regex("depth (\\d+)").find(line)?.let {
+                state.depth = it.groupValues[1].toInt()
+            }
+            Regex("score cp (-?\\d+)").find(line)?.let {
+                state.score = it.groupValues[1].toInt()
+            }
+            Regex("score mate (-?\\d+)").find(line)?.let {
+                state.mateIn = it.groupValues[1].toInt()
+            }
+            Regex("pv (.+)$").find(line)?.let {
+                state.pv = it.groupValues[1]
+                    .trim()
+                    .split(" ")
+                    .filter { token ->
+                        token.length in 4..5
+                                && token[0] in 'a'..'h'
+                                && token[1] in '1'..'8'
+                                && token[2] in 'a'..'h'
+                                && token[3] in '1'..'8'
+                    }
+                    .take(4)
+            }
+        }
+        if (line.startsWith("bestmove")) {
+            state.bestMove = line.split(" ")[1]
+            state.done     = true
+        }
+    }
 
+    // Convenience for tests — feed a list of lines
+    fun parseStockfishOutput(lines: List<String>): PositionEval {
+        val state = EvalParseState()
+        for (line in lines) {
+            parseLine(line, state)
+            if (state.done) break
+        }
+        return PositionEval(state.score, state.bestMove, state.mateIn, state.pv, state.depth)
+    }
 
     fun sendCommand(command: String) {
         outputStream?.write("$command\n")

@@ -28,7 +28,7 @@ class KingTest {
 
     @Test
     fun `king can move one square in any direction`() {
-        king = King(white, Position(4, 4), isKilled = false)
+        king = King(color = white, position = Position(4, 4), isKilled = false)
         board.getBox(4, 4).chessPiece = king
         val directions = listOf(
             Pair(-1, 0), Pair(1, 0), Pair(0, -1), Pair(0, 1),
@@ -44,7 +44,7 @@ class KingTest {
 
     @Test
     fun `king cannot move more than one square`() {
-        king = King(white, Position(4, 4), isKilled = false)
+        king = King(color = white, position = Position(4, 4), isKilled = false)
         board.getBox(4, 4).chessPiece = king
         val invalidMoves = listOf(
             Pair(2, 4), // 2 steps up
@@ -62,9 +62,9 @@ class KingTest {
 
     @Test
     fun `king cannot capture same color piece`() {
-        king = King(white, Position(7, 4), isKilled = false)
+        king = King(color = white, position = Position(7, 4), isKilled = false)
         board.getBox(7, 4).chessPiece = king
-        val allyPawn = Pawn(white, Position(6, 4), isKilled = false)
+        val allyPawn = Pawn(color = white, position = Position(6, 4), isKilled = false)
         board.getBox(6, 4).chessPiece = allyPawn
         val canMove = king.canMove(board, board.getBox(7, 4), board.getBox(6, 4))
         assertFalse("King should not capture same color", canMove)
@@ -72,9 +72,9 @@ class KingTest {
 
     @Test
     fun `king can capture opponent piece`() {
-        king = King(white, Position(7, 4), isKilled = false)
+        king = King(color = white, position = Position(7, 4), isKilled = false)
         board.getBox(7, 4).chessPiece = king
-        val enemyPawn = Pawn(black, Position(6, 4), false )
+        val enemyPawn = Pawn(color = black, position = Position(6, 4), isKilled = false )
         board.getBox(6, 4).chessPiece = enemyPawn
         val canMove = king.canMove(board, board.getBox(7, 4), board.getBox(6, 4))
         assertTrue("King should be able to capture opponent", canMove)
@@ -82,9 +82,9 @@ class KingTest {
 
     @Test
     fun `king side castling succeeds when valid`() {
-        king = King(white, Position(7, 4), false)
+        king = King(color = white, position = Position(7, 4), isKilled = false)
         board.getBox(7, 4).chessPiece = king
-        val rook = Rook(white, Position(7, 7), false)
+        val rook = Rook(color = white, position = Position(7, 7), isKilled = false)
         board.getBox(7, 7).chessPiece = rook
         board.getBox(7, 5).chessPiece = null
         board.getBox(7, 6).chessPiece = null
@@ -97,11 +97,11 @@ class KingTest {
 
     @Test
     fun `queen side castling fails when piece blocks`() {
-        king = King(white, Position(7, 4), false)
+        king = King(color = white, position = Position(7, 4), isKilled = false)
         board.getBox(7, 4).chessPiece = king
-        val rook = Rook(white, Position(7, 0), false)
+        val rook = Rook(color = white, position = Position(7, 0), isKilled = false)
         board.getBox(7, 0).chessPiece = rook
-        board.getBox(7, 3).chessPiece = Queen(white, Position(7, 3), false)
+        board.getBox(7, 3).chessPiece = Queen(color = white, position = Position(7, 3), isKilled = false)
         king.hasMoved = false
         rook.hasMoved = false
 
@@ -111,9 +111,9 @@ class KingTest {
 
     @Test
     fun `king cannot castle when in check`() {
-        king = King(white, Position(7, 4), false)
+        king = King(color = white, position = Position(7, 4), isKilled =  false)
         board.getBox(7, 4).chessPiece = king
-        val rook = Rook(white, Position(7, 7), false)
+        val rook = Rook(color = white, position = Position(7, 7), isKilled = false)
         board.getBox(7, 7).chessPiece = rook
         board.getBox(7, 5).chessPiece = null
         board.getBox(7, 6).chessPiece = null
@@ -121,7 +121,7 @@ class KingTest {
         rook.hasMoved = false
 
         // Attacker placing king in check
-        val enemyRook = Rook(black, Position(6, 4), false)
+        val enemyRook = Rook(color = black, position = Position(6, 4), isKilled = false)
         board.getBox(6, 4).chessPiece = enemyRook
 
         val canCastle = king.canCastle(board.getBox(7, 4), board.getBox(7, 6), board)
@@ -129,10 +129,48 @@ class KingTest {
     }
 
     @Test
-    fun `castling moves king and rook correctly`() {
-        king = King(white, Position(7, 4), false)
+    fun `king cannot castle through attacked square`() {
+        king = King(color = white, position = Position(7, 4), isKilled = false)
         board.getBox(7, 4).chessPiece = king
-        val rook = Rook(white, Position(7, 7), false)
+        val rook = Rook(color = white, position = Position(7, 7), isKilled = false)
+        board.getBox(7, 7).chessPiece = rook
+        board.getBox(7, 5).chessPiece = null
+        board.getBox(7, 6).chessPiece = null
+        board.getBox(6, 5).chessPiece = null
+        king.hasMoved = false
+        rook.hasMoved = false
+
+        val enemyRook = Rook(color = black, position = Position(5, 5), isKilled = false)
+        board.getBox(5, 5).chessPiece = enemyRook
+
+        val canCastle = king.canCastle(board.getBox(7, 4), board.getBox(7, 6), board)
+        assertFalse("King should not castle through an attacked square", canCastle)
+    }
+
+    @Test
+    fun `king cannot castle onto attacked square`() {
+        king = King(color = white, position = Position(7, 4), isKilled = false)
+        board.getBox(7, 4).chessPiece = king
+        val rook = Rook(color = white, position = Position(7, 7), isKilled = false)
+        board.getBox(7, 7).chessPiece = rook
+        board.getBox(7, 5).chessPiece = null
+        board.getBox(7, 6).chessPiece = null
+        board.getBox(6, 6).chessPiece = null
+        king.hasMoved = false
+        rook.hasMoved = false
+
+        val enemyRook = Rook(color = black, position = Position(5, 6), isKilled = false)
+        board.getBox(5, 6).chessPiece = enemyRook
+
+        val canCastle = king.canCastle(board.getBox(7, 4), board.getBox(7, 6), board)
+        assertFalse("King should not castle onto an attacked square", canCastle)
+    }
+
+    @Test
+    fun `castling moves king and rook correctly`() {
+        king = King(color = white, position = Position(7, 4), isKilled = false)
+        board.getBox(7, 4).chessPiece = king
+        val rook = Rook(color = white, position = Position(7, 7), isKilled = false)
         board.getBox(7, 7).chessPiece = rook
         board.getBox(7, 5).chessPiece = null
         board.getBox(7, 6).chessPiece = null
@@ -160,7 +198,7 @@ class KingTest {
         )
 
         for (pos in edgePositions) {
-            val king = King(white, pos, false)
+            val king = King(color = white, position = pos, isKilled = false)
             board.getBox(pos.row, pos.column).chessPiece = king
 
             for ((dx, dy) in directions) {
