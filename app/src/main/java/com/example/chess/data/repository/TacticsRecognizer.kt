@@ -14,8 +14,6 @@ import com.example.chess.data.model.Position
 import com.example.chess.data.model.Queen
 import com.example.chess.data.model.Rook
 import javax.inject.Inject
-import kotlin.math.abs
-import kotlin.math.sign
 
 private const val TAG = "TacticsRecognizer"
 
@@ -71,44 +69,62 @@ class TacticsRecognizer @Inject constructor(
         tempBoard.getBox(move.from.position.row, move.from.position.column).chessPiece = null
         tempBoard.getBox(move.to.position.row, move.to.position.column).chessPiece = movedPiece
 
-        val opponentColor = if (movedPiece.color == Color.WHITE) Color.BLACK else Color.WHITE
-        val opponentKingSpot = game.findKing(tempBoard, opponentColor) ?: return null
-
-        // Attacker destination must be aligned with opponent king
-        if (!isAligned(move.to.position, opponentKingSpot.position)) return null
-
-        // Squares between attacker destination and king
-        val betweenSquares = squaresBetween(move.to.position, opponentKingSpot.position)
-
-        // Collect pieces between attacker and king
-        val blockingPieces = betweenSquares.mapNotNull { sq ->
-            tempBoard.getBox(sq.row, sq.column).chessPiece
+        // Only check directions valid for the piece type — same approach as
+        // isSkewer. Walking square-by-square also doubles as path-clearance
+        // verification, so there's no separate "can the attacker actually reach
+        // the back piece" check needed afterward.
+        val directions = when (movedPiece) {
+            is Rook -> listOf(
+                Pair(1, 0), Pair(-1, 0), Pair(0, 1), Pair(0, -1)
+            )
+            is Bishop -> listOf(
+                Pair(1, 1), Pair(1, -1), Pair(-1, 1), Pair(-1, -1)
+            )
+            is Queen -> listOf(
+                Pair(1, 0), Pair(-1, 0), Pair(0, 1), Pair(0, -1),
+                Pair(1, 1), Pair(1, -1), Pair(-1, 1), Pair(-1, -1)
+            )
+            else -> return null
         }
 
-        // Must be exactly ONE opponent piece between attacker and king
-        if (blockingPieces.size != 1) return null
-        val pinnedPiece = blockingPieces.first()
-        if (pinnedPiece.color == movedPiece.color) return null
+        for ((dr, dc) in directions) {
+            var r = move.to.position.row + dr
+            var c = move.to.position.column + dc
 
-        // Pin verification — simply remove the pinned piece and check
-        // if attacker can reach king directly
-        val verifyBoard = tempBoard.clone()
-        verifyBoard.getBox(
-            pinnedPiece.position.row,
-            pinnedPiece.position.column
-        ).chessPiece = null
+            var pinnedPiece: ChessPiece? = null
+            var backPiece: ChessPiece? = null
 
-        val attackerSpot = verifyBoard.getBox(
-            move.to.position.row,
-            move.to.position.column
-        )
-        val kingSpot = verifyBoard.getBox(
-            opponentKingSpot.position.row,
-            opponentKingSpot.position.column
-        )
+            while (r in 0..7 && c in 0..7) {
+                val sq = tempBoard.getBox(r, c).chessPiece
+                if (sq != null) {
+                    if (sq.color == movedPiece.color) break  // own piece blocks the ray
 
-        // If attacker can reach king when pinned piece is removed — it's a real pin
-        return if (movedPiece.canMove(verifyBoard, attackerSpot, kingSpot)) "Pin" else null
+                    if (pinnedPiece == null) {
+                        pinnedPiece = sq
+                    } else {
+                        backPiece = sq
+                        break
+                    }
+                }
+                r += dr
+                c += dc
+            }
+
+            // A pin needs an ordinary piece in front — never the king itself, since a
+            // king being attacked is a check, not a pin — with either the enemy king
+            // or a strictly more valuable piece directly behind it (absolute pin vs.
+            // relative pin; a pin against an equal-or-lesser-value piece isn't a real
+            // tactic, matching isSkewer's strictly-greater comparison).
+            if (pinnedPiece != null && pinnedPiece !is King && backPiece != null) {
+                val isKingBehind = backPiece is King
+                val isMoreValuable = pieceValue(backPiece) > pieceValue(pinnedPiece)
+                if (isKingBehind || isMoreValuable) {
+                    return "Pin"
+                }
+            }
+        }
+
+        return null
     }
 
     fun isDiscoveredCheck(board: Board, move: Move, player: Player): String? {
@@ -119,11 +135,15 @@ class TacticsRecognizer @Inject constructor(
         tempBoard.getBox(move.from.position.row, move.from.position.column).chessPiece = null
         tempBoard.getBox(move.to.position.row, move.to.position.column).chessPiece = piece
 
-        // Use a pre-move board that still has moving piece removed from origin
-        // so path-blocking is evaluated correctly in both states
+        // The true pre-move state is just the board as it was — the moving piece is
+        // still on its origin square, still blocking whatever it blocks there. (This
+        // used to also null out the origin square here, which self-defeated the
+        // comparison: it revealed the very same discovered attack we're trying to
+        // detect in the "before" snapshot too, so a genuine discovered check could
+        // never be told apart from a piece that was already attacking beforehand.)
+        // Cloned (rather than using `board` directly) so getAlivePieces' position-sync
+        // side effect never touches the caller's real board.
         val preMoveBoard = board.clone()
-        preMoveBoard.getBox(move.from.position.row, move.from.position.column).chessPiece = null
-
         val beforeAttackerIds = attackersToOpponentKing(preMoveBoard, player)
             .map { it.id }
             .toSet()
@@ -247,39 +267,6 @@ class TacticsRecognizer @Inject constructor(
         return if (attackers.size >= 2) "Double Check" else null
     }
 
-
-    private fun squaresBetween(a: Position, b: Position): List<Position> {
-        val squares = mutableListOf<Position>()
-
-        val rowDiff = b.row - a.row
-        val colDiff = b.column - a.column
-
-        val rowStep = rowDiff.sign
-        val colStep = colDiff.sign
-
-        // Check alignment: vertical, horizontal, or diagonal
-        val isSameRow = rowDiff == 0
-        val isSameCol = colDiff == 0
-        val isDiagonal = abs(rowDiff) == abs(colDiff)
-
-        if (!isSameRow && !isSameCol && !isDiagonal) return emptyList() // not aligned
-
-        var currentRow = a.row + rowStep
-        var currentCol = a.column + colStep
-
-        while (currentRow != b.row || currentCol != b.column) {
-            squares.add(Position(currentRow, currentCol))
-            currentRow += rowStep
-            currentCol += colStep
-        }
-
-        return squares
-    }
-
-    private fun isAligned(a: Position, b: Position): Boolean {
-        return a.row == b.row || a.column == b.column ||
-                abs(a.row - b.row) == abs(a.column - b.column)
-    }
 
     fun Position.next(direction: Pair<Int, Int>): Position? {
         val newRow = row + direction.first

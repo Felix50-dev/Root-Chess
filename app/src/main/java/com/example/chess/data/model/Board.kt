@@ -65,13 +65,19 @@ class Board @Inject constructor() {
                     // hasMoved must carry over — omitting it (as before) makes a clone
                     // think every piece is still on its starting square for castling
                     // purposes, regardless of what's actually happened in the real game.
+                    //
+                    // id must carry over too — it defaults to a fresh random UUID, and
+                    // callers that diff pieces across two separate clones by id (e.g.
+                    // TacticsRecognizer.isDiscoveredCheck) need the same logical piece
+                    // to keep the same id after cloning, or every clone looks like an
+                    // entirely new, unrelated set of pieces.
                     when (piece) {
-                        is Pawn -> Pawn(color = piece.color, position = clonedPosition, isKilled = piece.isKilled, hasMoved = piece.hasMoved)
-                        is Rook -> Rook(color = piece.color, position = clonedPosition, isKilled = piece.isKilled, hasMoved = piece.hasMoved)
-                        is Knight -> Knight(color = piece.color, position = clonedPosition, isKilled = piece.isKilled, hasMoved = piece.hasMoved)
-                        is Bishop -> Bishop(color = piece.color, position = clonedPosition, isKilled = piece.isKilled, hasMoved = piece.hasMoved)
-                        is Queen -> Queen(color = piece.color, position = clonedPosition, isKilled = piece.isKilled, hasMoved = piece.hasMoved)
-                        is King -> King(color = piece.color, position = clonedPosition, isKilled = piece.isKilled, hasMoved = piece.hasMoved)
+                        is Pawn -> Pawn(id = piece.id, color = piece.color, position = clonedPosition, isKilled = piece.isKilled, hasMoved = piece.hasMoved)
+                        is Rook -> Rook(id = piece.id, color = piece.color, position = clonedPosition, isKilled = piece.isKilled, hasMoved = piece.hasMoved)
+                        is Knight -> Knight(id = piece.id, color = piece.color, position = clonedPosition, isKilled = piece.isKilled, hasMoved = piece.hasMoved)
+                        is Bishop -> Bishop(id = piece.id, color = piece.color, position = clonedPosition, isKilled = piece.isKilled, hasMoved = piece.hasMoved)
+                        is Queen -> Queen(id = piece.id, color = piece.color, position = clonedPosition, isKilled = piece.isKilled, hasMoved = piece.hasMoved)
+                        is King -> King(id = piece.id, color = piece.color, position = clonedPosition, isKilled = piece.isKilled, hasMoved = piece.hasMoved)
                     }
                 }
                 Spot(clonedPosition, clonedPiece)
