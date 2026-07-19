@@ -205,7 +205,11 @@ fun ChessGameScreen(
         }
         AnimatedVisibility(visible = checkMateDialog) {
             CheckmateDialog(
-                text = "CheckMate",
+                text = when (boardState.gameStatus) {
+                    GameStatus.WHITE_WIN -> "Checkmate — White wins"
+                    GameStatus.BLACK_WIN -> "Checkmate — Black wins"
+                    else -> "CheckMate"
+                },
                 onNewGameSelected = {
                     chessGameViewModel.startNewGame()
                     checkMateDialog = false
