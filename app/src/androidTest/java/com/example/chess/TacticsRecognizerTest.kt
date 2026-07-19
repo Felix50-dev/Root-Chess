@@ -742,11 +742,11 @@ class TacticsRecognizerTest {
     }
 
     @Test
-    fun isFork_playerParamIgnored_wrongPlayerArgStillReturnsFork() {
-        // isFork derives color entirely from piece.color/target.color — the `player`
-        // parameter is never read in its body. Passing the "wrong" player (black) for
-        // a white piece's fork should not change the result if that dead-parameter
-        // finding is correct.
+    fun isFork_playerDeterminesPerspective_wrongPlayerReturnsNull() {
+        // isFork derives "my own pieces" from the `player` parameter, not from
+        // piece.color — passing the wrong player (black) for a white knight's fork
+        // makes the two real black targets look like "my own side" and get skipped,
+        // so no fork is found. Confirms `player` is genuinely load-bearing.
         val knight = Knight(color = Color.WHITE, position = Position(3, 2), isKilled = false)
         board.getBox(3, 2).chessPiece = knight
 
@@ -762,7 +762,7 @@ class TacticsRecognizerTest {
 
         val result = recognizer.isFork(board, move, player2)  // wrong player on purpose
 
-        assertEquals("Fork", result)
+        assertNull(result)
     }
 
     @Test
@@ -891,6 +891,35 @@ class TacticsRecognizerTest {
         )
 
         val result = recognizer.isPin(board, move, player1)
+
+        assertNull(result)
+    }
+
+    @Test
+    fun isPin_playerDeterminesPerspective_wrongPlayerReturnsNull() {
+        // Same geometry as isPin_bishopPinsKnightToKingOnDiagonal_returnsPin, but
+        // passing the wrong player (black) for a white bishop's pin makes the pinned
+        // black knight look like "my own side," so the ray breaks immediately instead
+        // of finding a pin. Confirms `player` is genuinely load-bearing here too.
+        val bishop = Bishop(color = Color.WHITE, position = Position(0, 6), isKilled = false)
+        board.getBox(0, 6).chessPiece = bishop
+
+        val knight = Knight(color = Color.BLACK, position = Position(3, 3), isKilled = false)
+        board.getBox(3, 3).chessPiece = knight
+
+        val king = King(color = Color.BLACK, position = Position(5, 1), isKilled = false)
+        board.getBox(5, 1).chessPiece = king
+
+        game.currentTurn.value = player1
+
+        val move = Move(
+            from = board.getBox(0, 6),
+            to = board.getBox(2, 4),
+            player = player1,
+            pieceMoved = bishop
+        )
+
+        val result = recognizer.isPin(board, move, player2)  // wrong player on purpose
 
         assertNull(result)
     }
@@ -1188,6 +1217,145 @@ class TacticsRecognizerTest {
         val result = recognizer.isDiscoveredCheck(board, move, player2)
 
         assertEquals("Discovered Check", result)
+    }
+
+    // ── Discovered Attack ────────────────────────────────────────────────────
+
+    @Test
+    fun isDiscoveredAttack_knightMovesRevealingBishopAttackOnRook_returnsDiscoveredAttack() {
+        // Row 0: B . . . . . . .   (White Bishop at 0,0)
+        // Row 2: . . N . . . . .   (White Knight at 2,2) — blocks the diagonal
+        // Row 4: . . . . r . . .   (Black Rook at 4,4)
+        //
+        // Knight moves off the diagonal, revealing the bishop's attack on the rook —
+        // a non-king target, so isDiscoveredCheck wouldn't catch this at all.
+        val bishop = Bishop(color = Color.WHITE, position = Position(0, 0), isKilled = false)
+        board.getBox(0, 0).chessPiece = bishop
+
+        val knight = Knight(color = Color.WHITE, position = Position(2, 2), isKilled = false)
+        board.getBox(2, 2).chessPiece = knight
+
+        val rook = Rook(color = Color.BLACK, position = Position(4, 4), isKilled = false)
+        board.getBox(4, 4).chessPiece = rook
+
+        game.currentTurn.value = player1
+
+        val move = Move(
+            from = board.getBox(2, 2),
+            to = board.getBox(4, 1),   // knight moves off the diagonal
+            player = player1,
+            pieceMoved = knight
+        )
+
+        val result = recognizer.isDiscoveredAttack(board, move, player1)
+
+        assertEquals("Discovered Attack", result)
+    }
+
+    @Test
+    fun isDiscoveredAttack_onlyRevealsCheckOnKing_returnsNull() {
+        // Same board as isDiscoveredCheck_knightMovesRevealingRook_returnsDiscoveredCheck
+        // — the only thing revealed is a check on the king, which is
+        // isDiscoveredCheck's job; kings are explicitly excluded as targets here.
+        val rook = Rook(color = Color.WHITE, position = Position(0, 3), isKilled = false)
+        board.getBox(0, 3).chessPiece = rook
+
+        val knight = Knight(color = Color.WHITE, position = Position(3, 3), isKilled = false)
+        board.getBox(3, 3).chessPiece = knight
+
+        val blackKing = King(color = Color.BLACK, position = Position(7, 3), isKilled = false)
+        board.getBox(7, 3).chessPiece = blackKing
+
+        game.currentTurn.value = player1
+
+        val move = Move(
+            from = board.getBox(3, 3),
+            to = board.getBox(4, 5),
+            player = player1,
+            pieceMoved = knight
+        )
+
+        val result = recognizer.isDiscoveredAttack(board, move, player1)
+
+        assertNull(result)
+    }
+
+    @Test
+    fun isDiscoveredAttack_revealedTargetBelowValueThreshold_returnsNull() {
+        // Same shape as the positive test, but the revealed target is a pawn (value
+        // 1, below MIN_FORK_TARGET_VALUE) instead of a rook.
+        val bishop = Bishop(color = Color.WHITE, position = Position(0, 0), isKilled = false)
+        board.getBox(0, 0).chessPiece = bishop
+
+        val knight = Knight(color = Color.WHITE, position = Position(2, 2), isKilled = false)
+        board.getBox(2, 2).chessPiece = knight
+
+        val pawn = Pawn(color = Color.BLACK, position = Position(4, 4), isKilled = false)
+        board.getBox(4, 4).chessPiece = pawn
+
+        game.currentTurn.value = player1
+
+        val move = Move(
+            from = board.getBox(2, 2),
+            to = board.getBox(4, 1),
+            player = player1,
+            pieceMoved = knight
+        )
+
+        val result = recognizer.isDiscoveredAttack(board, move, player1)
+
+        assertNull(result)
+    }
+
+    @Test
+    fun isDiscoveredAttack_noReveal_returnsNull() {
+        // Knight moves, but nothing was ever blocking a line to anything.
+        val knight = Knight(color = Color.WHITE, position = Position(2, 2), isKilled = false)
+        board.getBox(2, 2).chessPiece = knight
+
+        val rook = Rook(color = Color.BLACK, position = Position(6, 6), isKilled = false)
+        board.getBox(6, 6).chessPiece = rook
+
+        game.currentTurn.value = player1
+
+        val move = Move(
+            from = board.getBox(2, 2),
+            to = board.getBox(4, 1),
+            player = player1,
+            pieceMoved = knight
+        )
+
+        val result = recognizer.isDiscoveredAttack(board, move, player1)
+
+        assertNull(result)
+    }
+
+    @Test
+    fun isDiscoveredAttack_preExistingAttackerUnrelatedMove_returnsNull() {
+        // Bishop already has a completely open diagonal to the rook BEFORE the move;
+        // an unrelated knight move elsewhere doesn't touch that diagonal at all.
+        // Nothing was newly revealed, so this should not be a discovered attack.
+        val bishop = Bishop(color = Color.WHITE, position = Position(0, 0), isKilled = false)
+        board.getBox(0, 0).chessPiece = bishop
+
+        val rook = Rook(color = Color.BLACK, position = Position(4, 4), isKilled = false)
+        board.getBox(4, 4).chessPiece = rook
+
+        val knight = Knight(color = Color.WHITE, position = Position(0, 7), isKilled = false)
+        board.getBox(0, 7).chessPiece = knight
+
+        game.currentTurn.value = player1
+
+        val move = Move(
+            from = board.getBox(0, 7),
+            to = board.getBox(2, 6),
+            player = player1,
+            pieceMoved = knight
+        )
+
+        val result = recognizer.isDiscoveredAttack(board, move, player1)
+
+        assertNull(result)
     }
 
     // ── Double Check: additional coverage ──────────────────────────────────────
