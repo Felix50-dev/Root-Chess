@@ -232,6 +232,59 @@ class TacticsRecognizerTest {
     }
 
     @Test
+    fun isPin_pinnedPieceDefendedElsewhere_pinStandsButCaptureIsUnsafe() {
+        // Arrange
+        //
+        // Row 0: . . . . . . B .   (White Bishop at 0,6)
+        // Row 2: . . . . B . . .   (Bishop's landing square when creating the pin)
+        // Row 3: r . . N . . . .   (Black Rook at 3,0 — defends 3,3 along the rank,
+        //                           completely independent of the bishop's diagonal)
+        // Row 5: . K . . . . . .   (Black King at 5,1)
+        //
+        // Same geometry as isPin_bishopPinsKnightToKingOnDiagonal_returnsPin, plus a
+        // rook that has nothing to do with the pin diagonal but still defends the
+        // knight's square. A pin only proves the knight can't move without losing its
+        // king — it says nothing about whether marching in and capturing the knight is
+        // actually safe. isPin must still report the pin (it's real), but must not
+        // report it for the follow-up capture, since the bishop would just be hanging
+        // to the rook there.
+        val bishop = Bishop(color = Color.WHITE, position = Position(0, 6), isKilled = false)
+        board.getBox(0, 6).chessPiece = bishop
+
+        val knight = Knight(color = Color.BLACK, position = Position(3, 3), isKilled = false)
+        board.getBox(3, 3).chessPiece = knight
+
+        val rook = Rook(color = Color.BLACK, position = Position(3, 0), isKilled = false)
+        board.getBox(3, 0).chessPiece = rook
+
+        val king = King(color = Color.BLACK, position = Position(5, 1), isKilled = false)
+        board.getBox(5, 1).chessPiece = king
+
+        game.currentTurn.value = player1
+
+        // The pin-creating move: bishop relocates onto the diagonal, still just a
+        // geometric restriction on the knight — unaffected by the rook.
+        val pinningMove = Move(
+            from = board.getBox(0, 6),
+            to = board.getBox(2, 4),
+            player = player1,
+            pieceMoved = bishop
+        )
+        assertEquals("Pin", recognizer.isPin(board, pinningMove, player1))
+
+        // The follow-up capture: bishop actually takes the "pinned" knight. The rook
+        // has a clear, unrelated rank to recapture on 3,3 once the knight is gone, so
+        // this specific move must not be praised as a Pin.
+        val captureMove = Move(
+            from = board.getBox(2, 4),
+            to = board.getBox(3, 3),
+            player = player1,
+            pieceMoved = bishop
+        )
+        assertNull(recognizer.isPin(board, captureMove, player1))
+    }
+
+    @Test
     fun isPin_twoBlockingPieces_returnsNull() {
         // Arrange — two pieces between attacker and king, not a pin
         //
