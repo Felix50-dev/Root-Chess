@@ -431,8 +431,11 @@ class GamePlay @Inject constructor(
 
         val (insightType, insightDetail) = when {
 
-            // Brilliant tactic found
-            tactics.isNotEmpty() -> InsightType.BRILLIANT_TACTIC to
+            // Brilliant tactic found — but only praise it if the engine agrees the move
+            // was actually good. A matched tactic pattern only proves the tactic-executing
+            // piece is safe on its own landing square, not that exploiting the tactic
+            // (e.g. capturing a "pinned" piece that's defended elsewhere) is sound.
+            tactics.isNotEmpty() && evalLost <= 50 -> InsightType.BRILLIANT_TACTIC to
                     buildTacticFoundMessage(tactics, playerMove)
 
             // Missed mate
@@ -772,7 +775,12 @@ class GamePlay @Inject constructor(
             recognizer.isSkewer(firstBoard, playerMoveObject),
             recognizer.isDoubleCheck(firstBoard, playerMoveObject, currentPlayer),
         )
-        if (tactics.isNotEmpty()) category = "Brilliant"
+        // A tactic pattern (Pin/Fork/etc.) only proves the tactic-executing piece is safe
+        // on its own landing square — it says nothing about whether a later move actually
+        // exploiting it (e.g. capturing a "pinned" piece that's defended elsewhere) is
+        // sound. The engine's own loss measurement already captures that; don't let a
+        // matched tactic pattern override a move Stockfish says was actually bad.
+        if (tactics.isNotEmpty() && loss <= 50) category = "Brilliant"
 
         applyMove(playerMoveObject, firstBoard)
 
