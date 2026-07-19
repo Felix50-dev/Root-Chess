@@ -509,6 +509,11 @@ class ChessGameViewModel @Inject constructor(
     }
 
     fun resetGameStatus() {
+        // "Show Board" dismisses the checkmate/stalemate dialog without starting a new
+        // game — game.isGameOver must be cleared too, or handleHumanMove keeps rejecting
+        // every subsequent move attempt with no visible feedback.
+        game.isGameOver = false
+        game.status = GameStatus.ACTIVE
         _boardState.value = _boardState.value.copy(
             gameStatus = GameStatus.ACTIVE
         )
