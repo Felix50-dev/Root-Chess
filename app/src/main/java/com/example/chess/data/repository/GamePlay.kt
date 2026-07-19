@@ -140,6 +140,10 @@ class GamePlay @Inject constructor(
                     changeCurrentTurn()
                     return true
                 } else {
+                    // A freshly committed move invalidates whatever was previously undone —
+                    // replaying it via Redo would insert a stale move into a now-divergent
+                    // game history (e.g. two same-color moves in a row).
+                    movesUndone.clear()
                     if (!isGameOver) {
                         changeCurrentTurn()
                         return true
@@ -954,6 +958,9 @@ class GamePlay @Inject constructor(
 
                             // Check for winner and update turn safely
                             checkForWinner(player)
+                            // A freshly committed move invalidates whatever was previously
+                            // undone — see handleHumanMove for the same guard.
+                            movesUndone.clear()
                             if (!isGameOver) {
                                 changeCurrentTurn()
                                 return@withContext true
