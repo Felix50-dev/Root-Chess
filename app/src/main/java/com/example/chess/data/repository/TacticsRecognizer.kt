@@ -6,7 +6,6 @@ import com.example.chess.data.model.Board
 import com.example.chess.data.model.ChessPiece
 import com.example.chess.data.model.Color
 import com.example.chess.data.model.King
-import com.example.chess.data.model.Knight
 import com.example.chess.data.model.Move
 import com.example.chess.data.model.Pawn
 import com.example.chess.data.model.Player
@@ -31,6 +30,11 @@ class TacticsRecognizer @Inject constructor(
         val piece = move.pieceMoved ?: return null
         if (piece is King) return null  // kings don't fork
 
+        // `player` is the source of truth for whose perspective this is, rather than
+        // re-deriving color from `piece` — matters when the caller passes a `player`
+        // that intentionally differs (e.g. evaluating a hypothetical opponent reply).
+        val myColor = if (player.isWhite) Color.WHITE else Color.BLACK
+
         // Simulate on tempBoard only
         val tempBoard = board.clone()
         tempBoard.getBox(move.from.position.row, move.from.position.column).chessPiece = null
@@ -43,7 +47,7 @@ class TacticsRecognizer @Inject constructor(
             for (col in 0..7) {
                 val targetSquare = tempBoard.getBox(row, col)
                 val target = targetSquare.chessPiece ?: continue
-                if (target.color == piece.color) continue  // skip own pieces
+                if (target.color == myColor) continue  // skip own pieces
 
                 val fromSpot = tempBoard.getBox(move.to.position.row, move.to.position.column)
                 if (piece.canMove(tempBoard, fromSpot, targetSquare)) {
@@ -69,6 +73,10 @@ class TacticsRecognizer @Inject constructor(
     fun isPin(board: Board, move: Move, player: Player): String? {
         val movedPiece = move.pieceMoved ?: return null
         if (movedPiece !is Queen && movedPiece !is Rook && movedPiece !is Bishop) return null
+
+        // `player` is the source of truth for whose perspective this is, rather than
+        // re-deriving color from `movedPiece` — see isFork for the same reasoning.
+        val myColor = if (player.isWhite) Color.WHITE else Color.BLACK
 
         // Simulate on tempBoard
         val tempBoard = board.clone()
@@ -108,7 +116,7 @@ class TacticsRecognizer @Inject constructor(
             while (r in 0..7 && c in 0..7) {
                 val sq = tempBoard.getBox(r, c).chessPiece
                 if (sq != null) {
-                    if (sq.color == movedPiece.color) break  // own piece blocks the ray
+                    if (sq.color == myColor) break  // own piece blocks the ray
 
                     if (pinnedPiece == null) {
                         pinnedPiece = sq
@@ -128,7 +136,7 @@ class TacticsRecognizer @Inject constructor(
             // tactic, matching isSkewer's strictly-greater comparison).
             if (pinnedPiece != null && pinnedPiece !is King && backPiece != null && !isHanging) {
                 val isKingBehind = backPiece is King
-                val isMoreValuable = pieceValue(backPiece) > pieceValue(pinnedPiece)
+                val isMoreValuable = backPiece.value > pinnedPiece.value
                 if (isKingBehind || isMoreValuable) {
                     return "Pin"
                 }
@@ -176,13 +184,58 @@ class TacticsRecognizer @Inject constructor(
     private fun attackersToOpponentKing(board: Board, player: Player): List<ChessPiece> {
         val opponentColor = if (player.isWhite) Color.BLACK else Color.WHITE
         val kingSpot = game.findKing(board, opponentColor) ?: return emptyList()
-        val kingPos = kingSpot.position
+        return attackersOf(board, player, kingSpot.position)
+    }
 
+    // All of `player`'s pieces that can (pseudo-legally) reach `target` on `board`.
+    private fun attackersOf(board: Board, player: Player, target: Position): List<ChessPiece> {
+        val targetSpot = board.getBox(target.row, target.column)
         return game.getAlivePieces(player, board).filter { piece ->
             val fromSpot = board.getBox(piece.position.row, piece.position.column)
-            val toSpot = board.getBox(kingPos.row, kingPos.column)
-            piece.canMove(board, fromSpot, toSpot)
+            piece.canMove(board, fromSpot, targetSpot)
         }
+    }
+
+    // Discovered Check's sibling: moving a piece reveals a DIFFERENT one of the
+    // mover's pieces now attacking an enemy piece it didn't attack before — same
+    // detection shape as isDiscoveredCheck, generalized from "attacks the king" to
+    // "attacks any sufficiently valuable non-king enemy piece".
+    fun isDiscoveredAttack(board: Board, move: Move, player: Player): String? {
+        val piece = move.pieceMoved ?: return null
+
+        val tempBoard = board.clone()
+        tempBoard.getBox(move.from.position.row, move.from.position.column).chessPiece = null
+        tempBoard.getBox(move.to.position.row, move.to.position.column).chessPiece = piece
+
+        // True pre-move state — see isDiscoveredCheck for why the moving piece must
+        // stay on its origin square here rather than being removed.
+        val preMoveBoard = board.clone()
+
+        val opponentColor = if (player.isWhite) Color.BLACK else Color.WHITE
+
+        for (row in 0..7) {
+            for (col in 0..7) {
+                val targetAfter = tempBoard.getBox(row, col).chessPiece ?: continue
+                if (targetAfter.color != opponentColor) continue
+                if (targetAfter is King) continue  // that's isDiscoveredCheck's job
+                if (targetAfter.value < MIN_FORK_TARGET_VALUE) continue
+
+                val targetPosition = Position(row, col)
+                val beforeAttackerIds = attackersOf(preMoveBoard, player, targetPosition)
+                    .map { it.id }
+                    .toSet()
+                val afterAttackers = attackersOf(tempBoard, player, targetPosition)
+
+                val hasNewAttacker = afterAttackers.any { attacker ->
+                    attacker.id !in beforeAttackerIds && attacker.id != piece.id
+                }
+                if (hasNewAttacker) {
+                    return "Discovered Attack"
+                }
+            }
+        }
+
+        return null
     }
 
     fun isSkewer(board: Board, move: Move): String? {
@@ -239,7 +292,7 @@ class TacticsRecognizer @Inject constructor(
             }
 
             if (firstPiece != null && secondPiece != null &&
-                pieceValue(firstPiece) > pieceValue(secondPiece) && !isHanging
+                firstPiece.value > secondPiece.value && !isHanging
             ) {
                 return "Skewer"
             }
@@ -291,16 +344,6 @@ class TacticsRecognizer @Inject constructor(
         }
 
         return !isDefended || attackerValue < piece.value
-    }
-
-    private fun pieceValue(piece: ChessPiece): Int {
-        return when (piece) {
-            is King -> 1000
-            is Queen -> 9
-            is Rook -> 5
-            is Bishop, is Knight -> 3
-            is Pawn -> 1
-        }
     }
 
     fun isDoubleCheck(board: Board, move: Move, player: Player): String? {

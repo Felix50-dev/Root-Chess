@@ -500,6 +500,7 @@ class GamePlay @Inject constructor(
             "Pin" -> "Good pin! You've tied down an enemy piece — it can't move without losing something more valuable."
             "Skewer" -> "Skewer! The stronger piece must move, exposing the weaker one behind it."
             "Discovered Check" -> "Discovered check! Moving one piece revealed an attack from another — a powerful double threat."
+            "Discovered Attack" -> "Discovered attack! Moving one piece revealed another attacking a valuable enemy piece."
             "Double Check" -> "Double check! Extremely powerful — the king must move, with no other way to escape."
             else -> "Strong tactical move — you found $tacticName."
         }
@@ -763,6 +764,7 @@ class GamePlay @Inject constructor(
             recognizer.isFork(firstBoard, playerMoveObject, currentPlayer),
             recognizer.isPin(firstBoard, playerMoveObject, currentPlayer),
             recognizer.isDiscoveredCheck(firstBoard, playerMoveObject, currentPlayer),
+            recognizer.isDiscoveredAttack(firstBoard, playerMoveObject, currentPlayer),
             recognizer.isSkewer(firstBoard, playerMoveObject),
             recognizer.isDoubleCheck(firstBoard, playerMoveObject, currentPlayer),
         )
