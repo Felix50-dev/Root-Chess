@@ -93,6 +93,11 @@ class TacticsRecognizer @Inject constructor(
             else -> return null
         }
 
+        // A pin where the pinning piece itself is just hanging for free isn't a
+        // lasting threat — the opponent captures it instead of living with the pin.
+        // Same property-of-the-destination-square reasoning as isSkewer, checked once.
+        val isHanging = isPieceHangingForFree(tempBoard, movedPiece, move.to.position)
+
         for ((dr, dc) in directions) {
             var r = move.to.position.row + dr
             var c = move.to.position.column + dc
@@ -121,7 +126,7 @@ class TacticsRecognizer @Inject constructor(
             // or a strictly more valuable piece directly behind it (absolute pin vs.
             // relative pin; a pin against an equal-or-lesser-value piece isn't a real
             // tactic, matching isSkewer's strictly-greater comparison).
-            if (pinnedPiece != null && pinnedPiece !is King && backPiece != null) {
+            if (pinnedPiece != null && pinnedPiece !is King && backPiece != null && !isHanging) {
                 val isKingBehind = backPiece is King
                 val isMoreValuable = pieceValue(backPiece) > pieceValue(pinnedPiece)
                 if (isKingBehind || isMoreValuable) {
