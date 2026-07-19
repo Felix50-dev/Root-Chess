@@ -488,6 +488,9 @@ class ChessGameViewModel @Inject constructor(
             //game.piecesKilled.clear()
             _piecesKilled.value = emptyList<ChessPiece>().toMutableList()
             _selectedPiecePosition.value = null
+            _validMoves.value = emptyList()
+            _lastMove.value = null
+            _aiLastMove.value = null
             _boardState.value = _boardState.value.copy(
                 gameStatus = GameStatus.ACTIVE
             )
@@ -923,6 +926,7 @@ class ChessGameViewModel @Inject constructor(
             game.changeCurrentTurn()
         }
 
+        refreshLastMoveHighlight()
         syncAfterBoardChange()
     }
 
@@ -942,7 +946,18 @@ class ChessGameViewModel @Inject constructor(
             game.redoMove(game.movesUndone.last(), game.board)
         }
 
+        refreshLastMoveHighlight()
         syncAfterBoardChange()
+    }
+
+    // lastMove/aiLastMove both feed the same square-highlight state (see
+    // buildSquareUiStates), so after an Undo/Redo just recompute a single source of
+    // truth from the real move history instead of leaving whichever field was set by
+    // the move that's now been undone/replayed.
+    private fun refreshLastMoveHighlight() {
+        val newLastMove = game.movesPlayed.lastOrNull()
+        _lastMove.value = newLastMove?.let { Move(it.from.position, it.to.position) }
+        _aiLastMove.value = null
     }
 
     // Single source of truth for post-move UI sync
