@@ -157,12 +157,57 @@ class TacticsRecognizerTest {
     }
 
     @Test
-    fun isPin_queenPinsRookToKingOnRank_returnsPin() {
+    fun isPin_rookPinsRookToKingOnRank_returnsPin() {
         // Arrange
         //
-        // Row 4: Q . . . R . . K
+        // Row 4: R . . . r . . K
         //       (4,0)  (4,4)  (4,7)
+        //
+        // Uses a Rook (not Queen) as the attacker: since the pinned piece here is
+        // itself a Rook that could always legally capture straight back along the
+        // same rank (that stays on the pin line, so it never exposes the king
+        // either way), a MORE valuable attacker (e.g. a Queen) would make this an
+        // unsound pin regardless of any defender — trading a Queen for a Rook loses
+        // material even if the Queen is recaptured afterward. An equal-value
+        // attacker keeps the trade neutral-or-better for White once defended.
 
+        val rookAttacker = Rook(color = Color.WHITE, position = Position(4, 0), isKilled = false)
+        board.getBox(4, 0).chessPiece = rookAttacker
+
+        // Defends the attacking rook's landing square (4,2) — without this, the
+        // pinned rook could simply capture it for an even trade, and an undefended
+        // even trade still isn't a real, lasting pin.
+        val knight = Knight(color = Color.WHITE, position = Position(2, 1), isKilled = false)
+        board.getBox(2, 1).chessPiece = knight
+
+        val pinnedRook = Rook(color = Color.BLACK, position = Position(4, 4), isKilled = false)
+        board.getBox(4, 4).chessPiece = pinnedRook
+
+        val king = King(color = Color.BLACK, position = Position(4, 7), isKilled = false)
+        board.getBox(4, 7).chessPiece = king
+
+        game.currentTurn.value = player1
+
+        val move = Move(
+            from = board.getBox(4, 0),
+            to = board.getBox(4, 2),   // rook moves along rank toward pinned piece
+            player = player1,
+            pieceMoved = rookAttacker
+        )
+
+        // Act
+        val result = recognizer.isPin(board, move, player1)
+
+        // Assert
+        assertEquals("Pin", result)
+    }
+
+    @Test
+    fun isPin_pinnerHangingForFree_returnsNull() {
+        // Deliberately uses a Queen (not a Rook) as the attacker, undefended — the
+        // "pinned" rook can simply capture the queen for free (staying on the same
+        // rank keeps the black king just as safe either way), so this isn't a real
+        // pin regardless of the value mismatch even being defended.
         val queen = Queen(color = Color.WHITE, position = Position(4, 0), isKilled = false)
         board.getBox(4, 0).chessPiece = queen
 
@@ -176,16 +221,14 @@ class TacticsRecognizerTest {
 
         val move = Move(
             from = board.getBox(4, 0),
-            to = board.getBox(4, 2),   // queen moves along rank toward pinned piece
+            to = board.getBox(4, 2),
             player = player1,
             pieceMoved = queen
         )
 
-        // Act
         val result = recognizer.isPin(board, move, player1)
 
-        // Assert
-        assertEquals("Pin", result)
+        assertNull(result)
     }
 
     @Test
