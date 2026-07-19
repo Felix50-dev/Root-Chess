@@ -29,6 +29,9 @@ import com.example.chess.domain.model.MoveInsight
 import com.example.chess.presentation.model.VisualPiece
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.collections.immutable.ImmutableList
+import kotlinx.collections.immutable.persistentListOf
+import kotlinx.collections.immutable.toPersistentList
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -134,6 +137,23 @@ class ChessGameViewModel @Inject constructor(
     private val _isPlaying = MutableStateFlow(false)
     val isPlaying: StateFlow<Boolean> = _isPlaying
 
+    // Guards nextMove()/previousMove() against overlapping invocations. _currentMoveIndex
+    // advances partway through each of those functions, well before their closing
+    // delay(MOVE_ANIMATION_TIME) — so a second tap on Next/Previous during that window used
+    // to launch a second coroutine that mutated the same game.board/_visualPieces mid-animation,
+    // making pieces jump instead of animating smoothly.
+    private val _isTransitioning = MutableStateFlow(false)
+    val isTransitioning: StateFlow<Boolean> = _isTransitioning.asStateFlow()
+
+    // Tracks the in-flight AI move-explanation coroutine so a new Next/Previous tap
+    // cancels the previous one instead of letting concurrent Gemini calls pile up.
+    private var explanationJob: Job? = null
+
+    // Set once a Gemini call fails with a quota/rate-limit error (HTTP 429), so we stop
+    // firing a doomed network request (and its CPU/IO cost) on every remaining move step
+    // for the rest of this session.
+    private var aiExplanationDisabled = false
+
     fun totalMovesCount(): Int = _movesToSimulate.size
     private var aiJob: Job? = null
     private var isPromotionPending = false
@@ -142,7 +162,7 @@ class ChessGameViewModel @Inject constructor(
     private var moveSoundId: Int = 0
     private var captureSoundId: Int = 0
 
-    private val _visualPieces = MutableStateFlow<List<VisualPiece>>(emptyList())
+    private val _visualPieces = MutableStateFlow<ImmutableList<VisualPiece>>(persistentListOf())
     val visualPieces = _visualPieces.asStateFlow()
 
     private val _currentInsight = MutableStateFlow<MoveInsight?>(null)
@@ -286,7 +306,7 @@ class ChessGameViewModel @Inject constructor(
                     previousPosition = previousPositions[piece.id]  // always the pre-move position
                 )
             }
-        }
+        }.toPersistentList()
 
         _visualPieces.value = updated
     }
@@ -443,7 +463,7 @@ class ChessGameViewModel @Inject constructor(
         }
     }
 
-    private fun createInitialVisualPieces(board: Board): List<VisualPiece> {
+    private fun createInitialVisualPieces(board: Board): ImmutableList<VisualPiece> {
         return board.boxes.flatten().mapNotNull { spot ->
             spot.chessPiece?.let { piece ->
                 VisualPiece(
@@ -453,7 +473,7 @@ class ChessGameViewModel @Inject constructor(
                     position = spot.position
                 )
             }
-        }
+        }.toPersistentList()
     }
 
     fun startNewGame() {
@@ -624,11 +644,29 @@ class ChessGameViewModel @Inject constructor(
         _movesMade.value = emptyList<String>().toMutableList()
         _currentMoveIndex.value = 0
         _currentMoveCategory.value = null
+        // game.init() resets the board in place, but the UI renders _boardState/
+        // _visualPieces, not game.board directly — without this, the review screen
+        // keeps showing the live game's final position until the first Next tap,
+        // and that tap animates pieces from their stale end-game positions.
+        _boardState.value = BoardState(game.board, game.currentTurn.value, game.status, null)
+        _visualPieces.value = createInitialVisualPieces(game.board)
+        _feedback.value = null
+        _currentInsight.value = null
+        _bestMoveArrow.value = null
+        _playerMoveArrow.value = null
     }
 
     suspend fun nextMove() {
-        if (_currentMoveIndex.value >= _movesToSimulate.size) return
+        if (_isTransitioning.value || _currentMoveIndex.value >= _movesToSimulate.size) return
+        _isTransitioning.value = true
+        try {
+            nextMoveInternal()
+        } finally {
+            _isTransitioning.value = false
+        }
+    }
 
+    private suspend fun nextMoveInternal() {
         val index = _currentMoveIndex.value
         val move = _movesToSimulate[index]
 
@@ -685,8 +723,16 @@ class ChessGameViewModel @Inject constructor(
     }
 
     suspend fun previousMove() {
-        if (_currentMoveIndex.value <= 0 || _isPlaying.value) return
+        if (_isTransitioning.value || _currentMoveIndex.value <= 0 || _isPlaying.value) return
+        _isTransitioning.value = true
+        try {
+            previousMoveInternal()
+        } finally {
+            _isTransitioning.value = false
+        }
+    }
 
+    private suspend fun previousMoveInternal() {
         val prevIndex = _currentMoveIndex.value - 1
         val move = _movesToSimulate[prevIndex]
         val previousPositions =
@@ -730,7 +776,9 @@ class ChessGameViewModel @Inject constructor(
         sanMove: String,
         index: Int,
     ) {
-        viewModelScope.launch {
+        if (aiExplanationDisabled) return
+        explanationJob?.cancel()
+        explanationJob = viewModelScope.launch {
             _explanationLoading.value = true
             try {
                 val request = MoveExplanationRequest(
@@ -761,6 +809,9 @@ class ChessGameViewModel @Inject constructor(
                 // Deterministic insight already shown — fall back to it silently from the
                 // user's perspective, but still log so a real failure is diagnosable.
                 Log.e(TAG, "launchAiExplanation: AI explanation failed, using deterministic insight", e)
+                if (e.message?.contains("429") == true) {
+                    aiExplanationDisabled = true
+                }
             } finally {
                 _explanationLoading.value = false
             }
