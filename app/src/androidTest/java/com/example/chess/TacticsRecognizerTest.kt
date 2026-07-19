@@ -376,6 +376,11 @@ class TacticsRecognizerTest {
         val bishop = Bishop(color = Color.WHITE, position = Position(0, 0), isKilled = false)
         board.getBox(0, 0).chessPiece = bishop
 
+        // Defends the bishop's landing square (2,2) — without this, the queen could
+        // just recapture the bishop for free, which isn't a sound skewer at all.
+        val knight = Knight(color = Color.WHITE, position = Position(0, 3), isKilled = false)
+        board.getBox(0, 3).chessPiece = knight
+
         val queen = Queen(color = Color.BLACK, position = Position(3, 3), isKilled = false)
         board.getBox(3, 3).chessPiece = queen
 
@@ -663,12 +668,14 @@ class TacticsRecognizerTest {
     }
 
     @Test
-    fun isFork_defendedTargets_stillReturnsFork_documentsNoSoundnessCheck() {
+    fun isFork_defendedTargets_stillReturnsFork_forkerItselfIsSafe() {
         // Same geometry as isForkReturnsForkWhenAttackingTwoValuablePieces, but both
         // targets are defended (king guards the queen, pawn guards the rook). isFork
-        // has no soundness/defense check at all, so it still reports "Fork" even
-        // though capturing either piece would just lose the knight for nothing — this
-        // documents that known limitation, it is not a bug report.
+        // only checks whether the FORKING piece itself is safe, not whether the
+        // individual targets are defended — the opponent still can't save both pieces
+        // at once, so this remains a real threat even though neither capture is "free."
+        // The knight's own landing square (4,4) isn't attacked by anything here, so
+        // it stays a sound fork.
         val knight = Knight(color = Color.WHITE, position = Position(3, 2), isKilled = false)
         board.getBox(3, 2).chessPiece = knight
 
@@ -713,6 +720,33 @@ class TacticsRecognizerTest {
         val result = recognizer.isFork(board, move, player2)  // wrong player on purpose
 
         assertEquals("Fork", result)
+    }
+
+    @Test
+    fun isFork_forkerHangingForFree_returnsNull() {
+        // Same fork geometry as isForkReturnsForkWhenAttackingTwoValuablePieces, but
+        // the knight's landing square (4,4) is attacked by an undefended black
+        // bishop — the opponent just takes the knight for free instead of losing a
+        // piece to the fork, so this is not a real threat.
+        val knight = Knight(color = Color.WHITE, position = Position(3, 2), isKilled = false)
+        board.getBox(3, 2).chessPiece = knight
+
+        val queen = Queen(color = Color.BLACK, position = Position(5, 6), isKilled = false)
+        board.getBox(5, 6).chessPiece = queen
+
+        val rook = Rook(color = Color.BLACK, position = Position(6, 5), isKilled = false)
+        board.getBox(6, 5).chessPiece = rook
+
+        val bishop = Bishop(color = Color.BLACK, position = Position(2, 2), isKilled = false)
+        board.getBox(2, 2).chessPiece = bishop  // clear diagonal to (4,4), undefended
+
+        game.currentTurn.value = player1
+
+        val move = Move(board.getBox(3, 2), board.getBox(4, 4), player1, knight)
+
+        val result = recognizer.isFork(board, move, player1)
+
+        assertNull(result)
     }
 
     // ── Pin: additional coverage ───────────────────────────────────────────────
@@ -980,6 +1014,35 @@ class TacticsRecognizerTest {
             to = board.getBox(1, 3),
             player = player1,
             pieceMoved = rook
+        )
+
+        val result = recognizer.isSkewer(board, move)
+
+        assertNull(result)
+    }
+
+    @Test
+    fun isSkewer_skewererHangingForFree_returnsNull() {
+        // Same geometry as isSkewerReturnsSkewerOnDiagonal, but without the defending
+        // knight — the bishop's landing square (2,2) is undefended and directly
+        // attacked by the queen it's "skewering," so the opponent just takes the
+        // bishop for free instead of losing the rook behind it.
+        val bishop = Bishop(color = Color.WHITE, position = Position(0, 0), isKilled = false)
+        board.getBox(0, 0).chessPiece = bishop
+
+        val queen = Queen(color = Color.BLACK, position = Position(3, 3), isKilled = false)
+        board.getBox(3, 3).chessPiece = queen
+
+        val rook = Rook(color = Color.BLACK, position = Position(6, 6), isKilled = false)
+        board.getBox(6, 6).chessPiece = rook
+
+        game.currentTurn.value = player1
+
+        val move = Move(
+            from = board.getBox(0, 0),
+            to = board.getBox(2, 2),
+            player = player1,
+            pieceMoved = bishop
         )
 
         val result = recognizer.isSkewer(board, move)
