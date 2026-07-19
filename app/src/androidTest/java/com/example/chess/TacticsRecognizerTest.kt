@@ -608,6 +608,530 @@ class TacticsRecognizerTest {
         assertEquals("Discovered Check", result)
     }
 
+    // ── Fork: additional coverage ──────────────────────────────────────────────
+
+    @Test
+    fun isFork_targetBelowValueThreshold_notCounted_onlyOneQualifyingTarget_returnsNull() {
+        // Knight forks a Rook (value 5, qualifies) and a Pawn (value 1, below
+        // MIN_FORK_TARGET_VALUE=3) — only one qualifying target, so this is not a fork.
+        val knight = Knight(color = Color.WHITE, position = Position(3, 2), isKilled = false)
+        board.getBox(3, 2).chessPiece = knight
+
+        val rook = Rook(color = Color.BLACK, position = Position(5, 6), isKilled = false)
+        board.getBox(5, 6).chessPiece = rook
+
+        val pawn = Pawn(color = Color.BLACK, position = Position(6, 5), isKilled = false)
+        board.getBox(6, 5).chessPiece = pawn
+
+        game.currentTurn.value = player1
+
+        val move = Move(board.getBox(3, 2), board.getBox(4, 4), player1, knight)
+
+        val result = recognizer.isFork(board, move, player1)
+
+        assertNull(result)
+    }
+
+    @Test
+    fun isFork_blockedByInterveningPiece_targetNotActuallyAttacked_returnsNull() {
+        // Row 0: . . . . R . . .   (Black Rook at 0,4 — column target, but blocked)
+        // Row 2: . . . . P . . .   (White Pawn at 2,4 — blocks the column, own color)
+        // Row 4: . . . . R . . Q   (White Rook at 4,4 moves here; Black Queen at 4,7)
+        //
+        // The rook "forks" along its row (reaches the queen, unblocked) and its column
+        // (blocked by its own pawn before reaching the black rook) — only 1 real
+        // qualifying target, so this should NOT be a fork.
+        val rook = Rook(color = Color.WHITE, position = Position(6, 4), isKilled = false)
+        board.getBox(6, 4).chessPiece = rook
+
+        val queen = Queen(color = Color.BLACK, position = Position(4, 7), isKilled = false)
+        board.getBox(4, 7).chessPiece = queen
+
+        val blocker = Pawn(color = Color.WHITE, position = Position(2, 4), isKilled = false)
+        board.getBox(2, 4).chessPiece = blocker
+
+        val blackRook = Rook(color = Color.BLACK, position = Position(0, 4), isKilled = false)
+        board.getBox(0, 4).chessPiece = blackRook
+
+        game.currentTurn.value = player1
+
+        val move = Move(board.getBox(6, 4), board.getBox(4, 4), player1, rook)
+
+        val result = recognizer.isFork(board, move, player1)
+
+        assertNull(result)
+    }
+
+    @Test
+    fun isFork_defendedTargets_stillReturnsFork_documentsNoSoundnessCheck() {
+        // Same geometry as isForkReturnsForkWhenAttackingTwoValuablePieces, but both
+        // targets are defended (king guards the queen, pawn guards the rook). isFork
+        // has no soundness/defense check at all, so it still reports "Fork" even
+        // though capturing either piece would just lose the knight for nothing — this
+        // documents that known limitation, it is not a bug report.
+        val knight = Knight(color = Color.WHITE, position = Position(3, 2), isKilled = false)
+        board.getBox(3, 2).chessPiece = knight
+
+        val queen = Queen(color = Color.BLACK, position = Position(5, 6), isKilled = false)
+        board.getBox(5, 6).chessPiece = queen
+        val queenDefender = King(color = Color.BLACK, position = Position(6, 7), isKilled = false)
+        board.getBox(6, 7).chessPiece = queenDefender
+
+        val rook = Rook(color = Color.BLACK, position = Position(6, 5), isKilled = false)
+        board.getBox(6, 5).chessPiece = rook
+        val rookDefender = Pawn(color = Color.BLACK, position = Position(5, 4), isKilled = false)
+        board.getBox(5, 4).chessPiece = rookDefender
+
+        game.currentTurn.value = player1
+
+        val move = Move(board.getBox(3, 2), board.getBox(4, 4), player1, knight)
+
+        val result = recognizer.isFork(board, move, player1)
+
+        assertEquals("Fork", result)
+    }
+
+    @Test
+    fun isFork_playerParamIgnored_wrongPlayerArgStillReturnsFork() {
+        // isFork derives color entirely from piece.color/target.color — the `player`
+        // parameter is never read in its body. Passing the "wrong" player (black) for
+        // a white piece's fork should not change the result if that dead-parameter
+        // finding is correct.
+        val knight = Knight(color = Color.WHITE, position = Position(3, 2), isKilled = false)
+        board.getBox(3, 2).chessPiece = knight
+
+        val queen = Queen(color = Color.BLACK, position = Position(5, 6), isKilled = false)
+        board.getBox(5, 6).chessPiece = queen
+
+        val rook = Rook(color = Color.BLACK, position = Position(6, 5), isKilled = false)
+        board.getBox(6, 5).chessPiece = rook
+
+        game.currentTurn.value = player1
+
+        val move = Move(board.getBox(3, 2), board.getBox(4, 4), player1, knight)
+
+        val result = recognizer.isFork(board, move, player2)  // wrong player on purpose
+
+        assertEquals("Fork", result)
+    }
+
+    // ── Pin: additional coverage ───────────────────────────────────────────────
+
+    @Test
+    fun isPin_relativePinAgainstQueen_NOT_DETECTED_knownGap() {
+        // Row 0: . . . R . . . .   (White Rook moves here)
+        // Row 3: . . . N . . . .   (Black Knight at 3,3) — would be pinned to the queen
+        // Row 6: . . . Q . . . .   (Black Queen at 6,3)
+        // Row 7: K . . . . . . .   (Black King at 7,0) — NOT aligned with column 3
+        //
+        // Textbook relative pin: the knight cannot move without dropping the queen
+        // behind it. isPin() only ever checks alignment/pin against the KING, so this
+        // real tactical pattern is invisible to it.
+        //
+        // EXPECTED TO FAIL against the current implementation — documents finding #2
+        // (isPin only detects absolute/king pins, not relative pins).
+        val rook = Rook(color = Color.WHITE, position = Position(0, 3), isKilled = false)
+        board.getBox(0, 3).chessPiece = rook
+
+        val knight = Knight(color = Color.BLACK, position = Position(3, 3), isKilled = false)
+        board.getBox(3, 3).chessPiece = knight
+
+        val queen = Queen(color = Color.BLACK, position = Position(6, 3), isKilled = false)
+        board.getBox(6, 3).chessPiece = queen
+
+        val king = King(color = Color.BLACK, position = Position(7, 0), isKilled = false)
+        board.getBox(7, 0).chessPiece = king
+
+        game.currentTurn.value = player1
+
+        val move = Move(
+            from = board.getBox(0, 3),
+            to = board.getBox(1, 3),
+            player = player1,
+            pieceMoved = rook
+        )
+
+        val result = recognizer.isPin(board, move, player1)
+
+        assertEquals("Pin", result)
+    }
+
+    @Test
+    fun isPin_blockingPieceOwnColor_returnsNull() {
+        // Same geometry as isPin_bishopPinsKnightToKingOnDiagonal_returnsPin, but the
+        // blocking piece is WHITE (the attacker's own color) — you can't pin your own
+        // piece to the enemy king.
+        val bishop = Bishop(color = Color.WHITE, position = Position(0, 6), isKilled = false)
+        board.getBox(0, 6).chessPiece = bishop
+
+        val knight = Knight(color = Color.WHITE, position = Position(3, 3), isKilled = false)
+        board.getBox(3, 3).chessPiece = knight
+
+        val king = King(color = Color.BLACK, position = Position(5, 1), isKilled = false)
+        board.getBox(5, 1).chessPiece = king
+
+        game.currentTurn.value = player1
+
+        val move = Move(
+            from = board.getBox(0, 6),
+            to = board.getBox(2, 4),
+            player = player1,
+            pieceMoved = bishop
+        )
+
+        val result = recognizer.isPin(board, move, player1)
+
+        assertNull(result)
+    }
+
+    @Test
+    fun isPin_diagonallyAlignedRookCannotPin_returnsNull() {
+        // Row 0: R . . . . . . .   (White Rook moves here — diagonally aligned with
+        //                           the king, but a rook can't actually move diagonally)
+        // Row 2: . . N . . . . .   (Black Knight at 2,2) — sole blocker on the diagonal
+        // Row 4: . . . . K . . .   (Black King at 4,4)
+        //
+        // isAligned() treats row/column/diagonal alignment the same way regardless of
+        // piece type, so this passes the coarse pre-filter — but the final
+        // canMove-based verification step should correctly reject it since a rook
+        // cannot move diagonally.
+        val rook = Rook(color = Color.WHITE, position = Position(1, 0), isKilled = false)
+        board.getBox(1, 0).chessPiece = rook
+
+        val knight = Knight(color = Color.BLACK, position = Position(2, 2), isKilled = false)
+        board.getBox(2, 2).chessPiece = knight
+
+        val king = King(color = Color.BLACK, position = Position(4, 4), isKilled = false)
+        board.getBox(4, 4).chessPiece = king
+
+        game.currentTurn.value = player1
+
+        val move = Move(
+            from = board.getBox(1, 0),
+            to = board.getBox(0, 0),
+            player = player1,
+            pieceMoved = rook
+        )
+
+        val result = recognizer.isPin(board, move, player1)
+
+        assertNull(result)
+    }
+
+    // ── Skewer: additional coverage ────────────────────────────────────────────
+
+    @Test
+    fun isSkewer_weakerPieceInFront_strongerBehind_returnsNull() {
+        // Reversed value order from isSkewerReturnsSkewerOnDiagonal — this is a PIN
+        // shape (weaker piece in front of a more valuable one), not a skewer.
+        val bishop = Bishop(color = Color.WHITE, position = Position(0, 0), isKilled = false)
+        board.getBox(0, 0).chessPiece = bishop
+
+        val rook = Rook(color = Color.BLACK, position = Position(3, 3), isKilled = false)
+        board.getBox(3, 3).chessPiece = rook
+
+        val queen = Queen(color = Color.BLACK, position = Position(6, 6), isKilled = false)
+        board.getBox(6, 6).chessPiece = queen
+
+        game.currentTurn.value = player1
+
+        val move = Move(
+            from = board.getBox(0, 0),
+            to = board.getBox(2, 2),
+            player = player1,
+            pieceMoved = bishop
+        )
+
+        val result = recognizer.isSkewer(board, move)
+
+        assertNull(result)
+    }
+
+    @Test
+    fun isSkewer_equalValuePieces_returnsNull() {
+        // Two rooks (equal value 5) on the same rank — the comparison is strictly
+        // greater-than, so equal values don't count as a skewer.
+        val rook = Rook(color = Color.WHITE, position = Position(4, 0), isKilled = false)
+        board.getBox(4, 0).chessPiece = rook
+
+        val blackRook1 = Rook(color = Color.BLACK, position = Position(4, 3), isKilled = false)
+        board.getBox(4, 3).chessPiece = blackRook1
+
+        val blackRook2 = Rook(color = Color.BLACK, position = Position(4, 6), isKilled = false)
+        board.getBox(4, 6).chessPiece = blackRook2
+
+        game.currentTurn.value = player1
+
+        val move = Move(
+            from = board.getBox(4, 0),
+            to = board.getBox(4, 1),
+            player = player1,
+            pieceMoved = rook
+        )
+
+        val result = recognizer.isSkewer(board, move)
+
+        assertNull(result)
+    }
+
+    @Test
+    fun isSkewer_blockedByOwnColorPiece_returnsNull() {
+        // Own-color pawn sits directly in the ray before any enemy piece — the scan
+        // stops there, never reaching the king/rook further along the row.
+        val rook = Rook(color = Color.WHITE, position = Position(4, 0), isKilled = false)
+        board.getBox(4, 0).chessPiece = rook
+
+        val whitePawn = Pawn(color = Color.WHITE, position = Position(4, 2), isKilled = false)
+        board.getBox(4, 2).chessPiece = whitePawn
+
+        val king = King(color = Color.BLACK, position = Position(4, 4), isKilled = false)
+        board.getBox(4, 4).chessPiece = king
+
+        val blackRook = Rook(color = Color.BLACK, position = Position(4, 7), isKilled = false)
+        board.getBox(4, 7).chessPiece = blackRook
+
+        game.currentTurn.value = player1
+
+        val move = Move(
+            from = board.getBox(4, 0),
+            to = board.getBox(4, 1),
+            player = player1,
+            pieceMoved = rook
+        )
+
+        val result = recognizer.isSkewer(board, move)
+
+        assertNull(result)
+    }
+
+    @Test
+    fun isSkewer_onlyOneEnemyPieceOnRay_returnsNull() {
+        // Just one enemy piece on the ray, nothing behind it — an attack, not a skewer.
+        val rook = Rook(color = Color.WHITE, position = Position(4, 0), isKilled = false)
+        board.getBox(4, 0).chessPiece = rook
+
+        val king = King(color = Color.BLACK, position = Position(4, 4), isKilled = false)
+        board.getBox(4, 4).chessPiece = king
+
+        game.currentTurn.value = player1
+
+        val move = Move(
+            from = board.getBox(4, 0),
+            to = board.getBox(4, 1),
+            player = player1,
+            pieceMoved = rook
+        )
+
+        val result = recognizer.isSkewer(board, move)
+
+        assertNull(result)
+    }
+
+    @Test
+    fun isSkewer_kingInFrontForcesMove_alwaysDetected() {
+        // Queen attacks along a diagonal — King (max value) must move, exposing a
+        // Knight behind it. Distinct from the existing skewer tests: attacker is a
+        // Queen and the exposed piece is a Knight, neither yet covered.
+        val queen = Queen(color = Color.WHITE, position = Position(0, 0), isKilled = false)
+        board.getBox(0, 0).chessPiece = queen
+
+        val king = King(color = Color.BLACK, position = Position(3, 3), isKilled = false)
+        board.getBox(3, 3).chessPiece = king
+
+        val knight = Knight(color = Color.BLACK, position = Position(5, 5), isKilled = false)
+        board.getBox(5, 5).chessPiece = knight
+
+        game.currentTurn.value = player1
+
+        val move = Move(
+            from = board.getBox(0, 0),
+            to = board.getBox(1, 1),
+            player = player1,
+            pieceMoved = queen
+        )
+
+        val result = recognizer.isSkewer(board, move)
+
+        assertEquals("Skewer", result)
+    }
+
+    @Test
+    fun isSkewer_relativePinShape_alsoNotDetected_documentsBlindSpot() {
+        // Same board as isPin_relativePinAgainstQueen_NOT_DETECTED_knownGap — a
+        // textbook relative pin (knight can't move without dropping the queen).
+        // isSkewer's value check (front > back) also can't catch this shape
+        // (3 > 9 is false), confirming this tactical pattern is invisible to BOTH
+        // functions as currently implemented. This test is expected to PASS (it
+        // documents the gap, matching current behavior — it pairs with the isPin
+        // test above, which documents the same gap as a failing test).
+        val rook = Rook(color = Color.WHITE, position = Position(0, 3), isKilled = false)
+        board.getBox(0, 3).chessPiece = rook
+
+        val knight = Knight(color = Color.BLACK, position = Position(3, 3), isKilled = false)
+        board.getBox(3, 3).chessPiece = knight
+
+        val queen = Queen(color = Color.BLACK, position = Position(6, 3), isKilled = false)
+        board.getBox(6, 3).chessPiece = queen
+
+        game.currentTurn.value = player1
+
+        val move = Move(
+            from = board.getBox(0, 3),
+            to = board.getBox(1, 3),
+            player = player1,
+            pieceMoved = rook
+        )
+
+        val result = recognizer.isSkewer(board, move)
+
+        assertNull(result)
+    }
+
+    // ── Discovered Check: additional coverage ──────────────────────────────────
+
+    @Test
+    fun isDiscoveredCheck_preExistingAttackerUnrelatedMove_returnsNull_KNOWN_BUG() {
+        // White Rook already has a completely open, unblocked file to the Black king
+        // BEFORE the move. A White Knight elsewhere makes a completely unrelated move
+        // that doesn't touch column 3 at all. Nothing was newly revealed, so this
+        // should NOT be a discovered check.
+        //
+        // EXPECTED TO FAIL against the current implementation: Board.clone() doesn't
+        // preserve ChessPiece.id, so isDiscoveredCheck's before/after attacker-ID diff
+        // is broken — the already-checking rook gets an unrelated fresh random ID in
+        // each of the two independent clones (preMoveBoard vs tempBoard), so it looks
+        // "new" regardless of whether anything actually changed. Documents finding #1.
+        val rook = Rook(color = Color.WHITE, position = Position(0, 3), isKilled = false)
+        board.getBox(0, 3).chessPiece = rook
+
+        val king = King(color = Color.BLACK, position = Position(7, 3), isKilled = false)
+        board.getBox(7, 3).chessPiece = king
+
+        val knight = Knight(color = Color.WHITE, position = Position(0, 0), isKilled = false)
+        board.getBox(0, 0).chessPiece = knight
+
+        game.currentTurn.value = player1
+
+        val move = Move(
+            from = board.getBox(0, 0),
+            to = board.getBox(2, 1),
+            player = player1,
+            pieceMoved = knight
+        )
+
+        val result = recognizer.isDiscoveredCheck(board, move, player1)
+
+        assertNull(result)
+    }
+
+    @Test
+    fun isDiscoveredCheck_directCheckAlsoRevealsAnotherAttacker_stillReturnsDiscoveredCheck() {
+        // Same board as isDoubleCheckReturnsDoubleCheckWhenTwoPiecesCheckOpponentKing —
+        // the knight both directly checks the king AND reveals the bishop's check by
+        // moving off its diagonal. isDiscoveredCheck should also fire here (the
+        // bishop is a genuine newly-revealed attacker, distinct from the moving
+        // knight, which is correctly excluded). Unlike the KNOWN_BUG test above, the
+        // bishop here was never attacking before the move (fully blocked by the
+        // knight), so this case doesn't depend on the broken ID diff to be correct.
+        val bishop = Bishop(color = Color.WHITE, position = Position(3, 1), isKilled = false)
+        board.getBox(3, 1).chessPiece = bishop
+
+        val knight = Knight(color = Color.WHITE, position = Position(1, 3), isKilled = false)
+        board.getBox(1, 3).chessPiece = knight
+
+        val blackKing = King(color = Color.BLACK, position = Position(0, 4), isKilled = false)
+        board.getBox(0, 4).chessPiece = blackKing
+
+        game.currentTurn.value = player1
+
+        val move = Move(
+            from = board.getBox(1, 3),
+            to = board.getBox(2, 5),
+            player = player1,
+            pieceMoved = knight
+        )
+
+        val result = recognizer.isDiscoveredCheck(board, move, player1)
+
+        assertEquals("Discovered Check", result)
+    }
+
+    @Test
+    fun isDiscoveredCheck_correctPlayerColorHandling_player2Perspective() {
+        // Mirror of isDiscoveredCheck_knightMovesRevealingRook_returnsDiscoveredCheck
+        // but from Black's perspective (player2 to move), confirming opponentColor
+        // derivation from the `player` parameter works symmetrically for both sides.
+        val rook = Rook(color = Color.BLACK, position = Position(0, 3), isKilled = false)
+        board.getBox(0, 3).chessPiece = rook
+
+        val knight = Knight(color = Color.BLACK, position = Position(3, 3), isKilled = false)
+        board.getBox(3, 3).chessPiece = knight
+
+        val whiteKing = King(color = Color.WHITE, position = Position(7, 3), isKilled = false)
+        board.getBox(7, 3).chessPiece = whiteKing
+
+        game.currentTurn.value = player2
+
+        val move = Move(
+            from = board.getBox(3, 3),
+            to = board.getBox(4, 5),
+            player = player2,
+            pieceMoved = knight
+        )
+
+        val result = recognizer.isDiscoveredCheck(board, move, player2)
+
+        assertEquals("Discovered Check", result)
+    }
+
+    // ── Double Check: additional coverage ──────────────────────────────────────
+
+    @Test
+    fun isDoubleCheck_onlySingleAttacker_returnsNull() {
+        // Exactly one checking piece post-move — below the >= 2 threshold.
+        val knight = Knight(color = Color.WHITE, position = Position(5, 4), isKilled = false)
+        board.getBox(5, 4).chessPiece = knight
+
+        val king = King(color = Color.BLACK, position = Position(7, 3), isKilled = false)
+        board.getBox(7, 3).chessPiece = king
+
+        game.currentTurn.value = player1
+
+        val move = Move(
+            from = board.getBox(5, 4),
+            to = board.getBox(7, 3),
+            player = player1,
+            pieceMoved = knight
+        )
+
+        val result = recognizer.isDoubleCheck(board, move, player1)
+
+        assertNull(result)
+    }
+
+    @Test
+    fun isDoubleCheck_noAttackers_returnsNull() {
+        // No checks at all after the move.
+        val knight = Knight(color = Color.WHITE, position = Position(0, 0), isKilled = false)
+        board.getBox(0, 0).chessPiece = knight
+
+        val king = King(color = Color.BLACK, position = Position(7, 7), isKilled = false)
+        board.getBox(7, 7).chessPiece = king
+
+        game.currentTurn.value = player1
+
+        val move = Move(
+            from = board.getBox(0, 0),
+            to = board.getBox(2, 1),
+            player = player1,
+            pieceMoved = knight
+        )
+
+        val result = recognizer.isDoubleCheck(board, move, player1)
+
+        assertNull(result)
+    }
+
     private fun Board.clear() {
         for (row in 0..7) {
             for (col in 0..7) {
