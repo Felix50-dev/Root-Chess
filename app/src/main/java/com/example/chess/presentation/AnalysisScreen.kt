@@ -38,7 +38,6 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -57,6 +56,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -87,9 +87,9 @@ fun ChessAnalysisScreen(
     chessGameViewModel: ChessGameViewModel,
     onStartReview: () -> Unit,
 ) {
-    val analysisResult by chessGameViewModel.analysisResult.collectAsState()
-    val isAnalyzing    by chessGameViewModel.isAnalyzing.collectAsState()
-    val analysisProgress by chessGameViewModel.analysisProgress.collectAsState()
+    val analysisResult by chessGameViewModel.analysisResult.collectAsStateWithLifecycle()
+    val isAnalyzing    by chessGameViewModel.isAnalyzing.collectAsStateWithLifecycle()
+    val analysisProgress by chessGameViewModel.analysisProgress.collectAsStateWithLifecycle()
 
     val isReady = analysisResult != null && !isAnalyzing
 

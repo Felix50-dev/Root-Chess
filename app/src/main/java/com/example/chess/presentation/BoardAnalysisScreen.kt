@@ -44,12 +44,16 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
@@ -59,17 +63,22 @@ import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.clipRect
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.chess.data.model.Feedback
 import com.example.chess.domain.model.GameSummary
 import com.example.chess.domain.model.MoveInsight
+import com.example.chess.presentation.model.buildSquareUiStates
 
 // ── Design tokens ─────────────────────────────────────────────────────────────
 
@@ -107,22 +116,23 @@ private fun categoryIcon(type: String) = when (type) {
 fun BoardAnalysisScreen(
     chessGameViewModel: ChessGameViewModel,
 ) {
-    val boardState         by chessGameViewModel.boardState.collectAsState()
-    val lastMove           by chessGameViewModel.lastMove.collectAsState()
-    val validMoves         by chessGameViewModel.validMoves.collectAsState()
-    val isInCheck          by chessGameViewModel.isInCheck.collectAsState()
-    val checkPosition      by chessGameViewModel.checkPosition.collectAsState()
-    val aiLastMove         by chessGameViewModel.aiLastMove.collectAsState()
-    val feedback           by chessGameViewModel.feedback.collectAsState()
-    val isPlaying          by chessGameViewModel.isPlaying.collectAsState()
-    val visualPieces       by chessGameViewModel.visualPieces.collectAsState()
-    val explanationLoading by chessGameViewModel.explanationLoading.collectAsState()
-    val analysisResult     by chessGameViewModel.analysisResult.collectAsState()
-    val currentMoveIndex   by chessGameViewModel.currentMoveIndex.collectAsState()
-    val currentInsight     by chessGameViewModel.currentInsight.collectAsState()
-    val gameSummary        by chessGameViewModel.gameSummary.collectAsState()
-    val bestMoveArrow      by chessGameViewModel.bestMoveArrow.collectAsState()
-    val playerMoveArrow    by chessGameViewModel.playerMoveArrow.collectAsState()
+    val boardState         by chessGameViewModel.boardState.collectAsStateWithLifecycle()
+    val lastMove           by chessGameViewModel.lastMove.collectAsStateWithLifecycle()
+    val validMoves         by chessGameViewModel.validMoves.collectAsStateWithLifecycle()
+    val isInCheck          by chessGameViewModel.isInCheck.collectAsStateWithLifecycle()
+    val checkPosition      by chessGameViewModel.checkPosition.collectAsStateWithLifecycle()
+    val aiLastMove         by chessGameViewModel.aiLastMove.collectAsStateWithLifecycle()
+    val feedback           by chessGameViewModel.feedback.collectAsStateWithLifecycle()
+    val isPlaying          by chessGameViewModel.isPlaying.collectAsStateWithLifecycle()
+    val isTransitioning    by chessGameViewModel.isTransitioning.collectAsStateWithLifecycle()
+    val visualPieces       by chessGameViewModel.visualPieces.collectAsStateWithLifecycle()
+    val explanationLoading by chessGameViewModel.explanationLoading.collectAsStateWithLifecycle()
+    val analysisResult     by chessGameViewModel.analysisResult.collectAsStateWithLifecycle()
+    val currentMoveIndex   by chessGameViewModel.currentMoveIndex.collectAsStateWithLifecycle()
+    val currentInsight     by chessGameViewModel.currentInsight.collectAsStateWithLifecycle()
+    val gameSummary        by chessGameViewModel.gameSummary.collectAsStateWithLifecycle()
+    val bestMoveArrow      by chessGameViewModel.bestMoveArrow.collectAsStateWithLifecycle()
+    val playerMoveArrow    by chessGameViewModel.playerMoveArrow.collectAsStateWithLifecycle()
 
     val screenWidth = LocalConfiguration.current.screenWidthDp.toFloat()
     // 28dp eval bar + 4dp gap + 8dp padding each side = 48dp reserved
@@ -152,6 +162,7 @@ fun BoardAnalysisScreen(
             // ── Move controls ─────────────────────────────────────────────────
             ReviewControls(
                 isPlaying        = isPlaying,
+                isTransitioning  = isTransitioning,
                 currentMoveIndex = currentMoveIndex,
                 totalMoves       = totalMoves,
                 onPrevious       = { chessGameViewModel.launchPreviousMove() },
@@ -182,25 +193,28 @@ fun BoardAnalysisScreen(
                 Spacer(modifier = Modifier.width(4.dp))
 
                 // Board stack: squares → arrows → pieces
+                val squareStates = remember(boardState.board, validMoves, lastMove, aiLastMove, isInCheck, checkPosition) {
+                    buildSquareUiStates(boardState.board, validMoves, lastMove, aiLastMove, isInCheck, checkPosition)
+                }
+
                 Box(modifier = Modifier.size(squareSize * 8)) {
 
                     // Layer 1 — squares
                     Column {
-                        boardState.board?.boxes?.forEachIndexed { row, rowData ->
+                        squareStates.chunked(8).forEach { rowStates ->
                             Row {
-                                rowData.forEachIndexed { column, spot ->
-                                    ChessSquare(
-                                        isWhite       = (row + column) % 2 == 0,
-                                        spot          = spot,
-                                        isInCheck     = isInCheck,
-                                        checkPosition = checkPosition,
-                                        validMoves    = validMoves,
-                                        onSelectSpot  = { chessGameViewModel.onSelectSpot(it) },
-                                        onMovePieceTo = { chessGameViewModel.movePieceTo(it) },
-                                        squareSize    = squareSize,
-                                        lastMove      = lastMove,
-                                        aiLastMove    = aiLastMove,
-                                    )
+                                rowStates.forEach { square ->
+                                    key(square.position.row, square.position.column) {
+                                        ChessSquare(
+                                            square        = square,
+                                            onSelectSpot  = { pos ->
+                                                boardState.board?.getBox(pos.row, pos.column)
+                                                    ?.let { spot -> chessGameViewModel.onSelectSpot(spot) }
+                                            },
+                                            onMovePieceTo = { chessGameViewModel.movePieceTo(it) },
+                                            squareSize    = squareSize,
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -409,6 +423,7 @@ private fun String.toSquareCenter(squareSizePx: Float): Offset? {
 @Composable
 private fun ReviewControls(
     isPlaying: Boolean,
+    isTransitioning: Boolean,
     currentMoveIndex: Int,
     totalMoves: Int,
     onPrevious: () -> Unit,
@@ -445,7 +460,7 @@ private fun ReviewControls(
             ) {
                 ControlButton(
                     onClick = onPrevious,
-                    enabled = currentMoveIndex > 0 && !isPlaying,
+                    enabled = currentMoveIndex > 0 && !isPlaying && !isTransitioning,
                     accent  = accent,
                 ) {
                     Icon(
@@ -474,7 +489,7 @@ private fun ReviewControls(
 
                 ControlButton(
                     onClick = onNext,
-                    enabled = currentMoveIndex < totalMoves,
+                    enabled = currentMoveIndex < totalMoves && !isPlaying && !isTransitioning,
                     accent  = accent,
                 ) {
                     Icon(
@@ -538,9 +553,15 @@ fun EvalBar(
     evalCp: Int,
     modifier: Modifier = Modifier,
 ) {
-    val clampedEval      = evalCp.coerceIn(-800, 800)
-    val whiteFraction    = (clampedEval + 800f) / 1600f
-    val animatedFraction by animateFloatAsState(
+    val clampedEval   = evalCp.coerceIn(-800, 800)
+    val whiteFraction = (clampedEval + 800f) / 1600f
+    // Not destructured with `by` — reading .value happens inside drawWithContent{}
+    // below (draw phase only). Resizing a Box's real layout height every animation
+    // frame (via weight() or Modifier.layout{}) forces a full relayout+redraw
+    // regardless of which phase reads the animated value — a size change can't be
+    // handled as a cheap GPU-layer transform. Keeping both boxes full-size and
+    // clipping what's drawn avoids the relayout entirely: just a clip + redraw.
+    val animatedFraction = animateFloatAsState(
         targetValue   = whiteFraction,
         animationSpec = tween(400, easing = FastOutSlowInEasing),
         label         = "eval_bar",
@@ -554,44 +575,52 @@ fun EvalBar(
         else          -> "0.0"
     }
 
-    Column(
-        modifier            = modifier.background(ColorSurface),
-        verticalArrangement = Arrangement.Bottom,
-    ) {
+    Box(modifier = modifier.background(ColorSurface)) {
+        // Gray fill — clipped to the top (1 - fraction) portion, draw phase only.
         Box(
-            modifier         = Modifier
-                .fillMaxWidth()
-                .weight((1f - animatedFraction).coerceAtLeast(0.02f))
-                .background(Color(0xFF2A2A2A)),
-            contentAlignment = Alignment.TopCenter,
-        ) {
-            if (evalCp < -50) {
-                Text(
-                    text      = evalLabel,
-                    fontSize  = 8.sp,
-                    color     = Color.White.copy(alpha = 0.6f),
-                    modifier  = Modifier.padding(top = 3.dp),
-                    textAlign = TextAlign.Center,
-                )
-            }
-        }
+            modifier = Modifier
+                .fillMaxSize()
+                .drawWithContent {
+                    val f = (1f - animatedFraction.value).coerceAtLeast(0.02f)
+                    clipRect(bottom = size.height * f) { this@drawWithContent.drawContent() }
+                }
+                .background(Color(0xFF2A2A2A))
+        )
 
+        // White fill — clipped to the bottom fraction portion, draw phase only.
         Box(
-            modifier         = Modifier
-                .fillMaxWidth()
-                .weight(animatedFraction.coerceAtLeast(0.02f))
-                .background(ColorWhiteSquare),
-            contentAlignment = Alignment.BottomCenter,
-        ) {
-            if (evalCp >= -50) {
-                Text(
-                    text      = evalLabel,
-                    fontSize  = 8.sp,
-                    color     = Color(0xFF1A1A1A).copy(alpha = 0.6f),
-                    modifier  = Modifier.padding(bottom = 3.dp),
-                    textAlign = TextAlign.Center,
-                )
-            }
+            modifier = Modifier
+                .fillMaxSize()
+                .drawWithContent {
+                    val f = animatedFraction.value.coerceAtLeast(0.02f)
+                    clipRect(top = size.height * (1f - f)) { this@drawWithContent.drawContent() }
+                }
+                .background(ColorWhiteSquare)
+        )
+
+        // Labels pinned to the fixed top/bottom of the bar — independent of the
+        // animated fraction, so they never trigger layout on their own.
+        if (evalCp < -50) {
+            Text(
+                text      = evalLabel,
+                fontSize  = 8.sp,
+                color     = Color.White.copy(alpha = 0.6f),
+                modifier  = Modifier
+                    .align(Alignment.TopCenter)
+                    .padding(top = 3.dp),
+                textAlign = TextAlign.Center,
+            )
+        }
+        if (evalCp >= -50) {
+            Text(
+                text      = evalLabel,
+                fontSize  = 8.sp,
+                color     = Color(0xFF1A1A1A).copy(alpha = 0.6f),
+                modifier  = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = 3.dp),
+                textAlign = TextAlign.Center,
+            )
         }
     }
 }
@@ -654,6 +683,18 @@ private fun EvalGraphCard(
 
 // ── Eval graph canvas ─────────────────────────────────────────────────────────
 
+// The curve, fills, and blunder dots depend only on the (fixed, post-analysis) evaluation
+// history and canvas size — never on which move is currently selected.
+private class EvalGraphStatics(
+    val path: Path,
+    val whiteFill: Path,
+    val blackFill: Path,
+    val blunderDots: List<Offset>,
+    val xStep: Float,
+    val mid: Float,
+    val height: Float,
+)
+
 @Composable
 fun EvalGraph(
     evaluations: List<Int>,
@@ -661,94 +702,110 @@ fun EvalGraph(
     currentIndex: Int,
     modifier: Modifier = Modifier,
 ) {
-    val clampedEvals = evaluations.map { it.coerceIn(-800, 800) }
+    val clampedEvals = remember(evaluations) { evaluations.map { it.coerceIn(-800, 800) } }
+    var canvasSize by remember { mutableStateOf(IntSize.Zero) }
 
-    Box(modifier = modifier) {
+    // Rebuilding these Paths (O(n) over the whole game) from scratch on every single
+    // Next/Previous/auto-review step was wasted main-thread work competing with the
+    // piece-slide animation on every move, growing with game length — remembering them
+    // means a step only has to redraw the cheap current-move marker line below.
+    val statics = remember(clampedEvals, canvasSize) {
+        if (clampedEvals.size < 2 || canvasSize.width == 0) return@remember null
+
+        val w     = canvasSize.width.toFloat()
+        val h     = canvasSize.height.toFloat()
+        val mid   = h / 2f
+        val xStep = w / (clampedEvals.size - 1).toFloat()
+
+        val path = Path().apply {
+            clampedEvals.forEachIndexed { i, eval ->
+                val x = i * xStep
+                val y = mid - (eval / 800f) * mid
+                if (i == 0) moveTo(x, y) else lineTo(x, y)
+            }
+        }
+
+        val whiteFill = Path().apply {
+            clampedEvals.forEachIndexed { i, eval ->
+                val x = i * xStep
+                val y = (mid - (eval / 800f) * mid).coerceAtMost(mid)
+                if (i == 0) moveTo(x, y) else lineTo(x, y)
+            }
+            lineTo((clampedEvals.size - 1) * xStep, mid)
+            lineTo(0f, mid)
+            close()
+        }
+
+        val blackFill = Path().apply {
+            moveTo(0f, mid)
+            clampedEvals.forEachIndexed { i, eval ->
+                val x = i * xStep
+                val y = (mid - (eval / 800f) * mid).coerceAtLeast(mid)
+                lineTo(x, y)
+            }
+            lineTo((clampedEvals.size - 1) * xStep, mid)
+            close()
+        }
+
+        val blunderDots = moveCategories.mapIndexedNotNull { i, cat ->
+            if ((cat == "Blunder" || cat == "MissedMate") && i < clampedEvals.size) {
+                Offset(i * xStep, mid - (clampedEvals[i] / 800f) * mid)
+            } else null
+        }
+
+        EvalGraphStatics(path, whiteFill, blackFill, blunderDots, xStep, mid, h)
+    }
+
+    Box(modifier = modifier.onSizeChanged { canvasSize = it }) {
         Canvas(modifier = Modifier.fillMaxSize()) {
-            if (clampedEvals.size < 2) return@Canvas
-
-            val w     = size.width
-            val h     = size.height
-            val mid   = h / 2f
-            val xStep = w / (clampedEvals.size - 1).toFloat()
+            val s = statics ?: return@Canvas
 
             drawLine(
                 color       = Color(0xFF444444),
-                start       = Offset(0f, mid),
-                end         = Offset(w, mid),
+                start       = Offset(0f, s.mid),
+                end         = Offset(size.width, s.mid),
                 strokeWidth = 1.dp.toPx(),
                 pathEffect  = PathEffect.dashPathEffect(floatArrayOf(5f, 4f)),
             )
 
-            val path = Path()
-            clampedEvals.forEachIndexed { i, eval ->
-                val x = i * xStep
-                val y = mid - (eval / 800f) * mid
-                if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
-            }
-
-            val whiteFill = Path().apply {
-                clampedEvals.forEachIndexed { i, eval ->
-                    val x = i * xStep
-                    val y = (mid - (eval / 800f) * mid).coerceAtMost(mid)
-                    if (i == 0) moveTo(x, y) else lineTo(x, y)
-                }
-                lineTo((clampedEvals.size - 1) * xStep, mid)
-                lineTo(0f, mid)
-                close()
-            }
             drawPath(
-                whiteFill,
+                s.whiteFill,
                 Brush.verticalGradient(
                     colors = listOf(ColorWhiteSquare.copy(alpha = 0.25f), Color.Transparent),
                     startY = 0f,
-                    endY   = mid,
+                    endY   = s.mid,
                 ),
             )
 
-            val blackFill = Path().apply {
-                moveTo(0f, mid)
-                clampedEvals.forEachIndexed { i, eval ->
-                    val x = i * xStep
-                    val y = (mid - (eval / 800f) * mid).coerceAtLeast(mid)
-                    lineTo(x, y)
-                }
-                lineTo((clampedEvals.size - 1) * xStep, mid)
-                close()
-            }
             drawPath(
-                blackFill,
+                s.blackFill,
                 Brush.verticalGradient(
                     colors = listOf(Color.Transparent, Color(0xFF444444).copy(alpha = 0.3f)),
-                    startY = mid,
-                    endY   = h,
+                    startY = s.mid,
+                    endY   = s.height,
                 ),
             )
 
             drawPath(
-                path  = path,
+                path  = s.path,
                 color = ColorWhiteSquare.copy(alpha = 0.8f),
                 style = Stroke(width = 1.5.dp.toPx(), cap = StrokeCap.Round),
             )
 
-            moveCategories.forEachIndexed { i, cat ->
-                if ((cat == "Blunder" || cat == "MissedMate") && i < clampedEvals.size) {
-                    val x = i * xStep
-                    val y = mid - (clampedEvals[i] / 800f) * mid
-                    drawCircle(
-                        color  = ColorBlunder,
-                        radius = 3.5.dp.toPx(),
-                        center = Offset(x, y),
-                    )
-                }
+            s.blunderDots.forEach { center ->
+                drawCircle(
+                    color  = ColorBlunder,
+                    radius = 3.5.dp.toPx(),
+                    center = center,
+                )
             }
 
             if (currentIndex > 0 && currentIndex <= clampedEvals.size) {
-                val curX = (currentIndex - 1) * xStep
+                val curX = (currentIndex - 1) * s.xStep
                 drawLine(
                     color       = ColorOak.copy(alpha = 0.7f),
                     start       = Offset(curX, 0f),
-                    end         = Offset(curX, h),
+                    end         = Offset(curX, s.height),
                     strokeWidth = 1.5.dp.toPx(),
                 )
             }
@@ -1033,10 +1090,20 @@ private fun BestContinuation(moves: List<String>, accent: Color) {
     }
 }
 
+private val ShimmerColors = listOf(
+    Color.White.copy(alpha = 0.04f),
+    Color.White.copy(alpha = 0.10f),
+    Color.White.copy(alpha = 0.04f),
+)
+
 @Composable
 private fun ShimmerExplanation() {
     val transition = rememberInfiniteTransition(label = "shimmer")
-    val translateX by transition.animateFloat(
+    // Not destructured with `by` — reading .value happens inside drawBehind{} below
+    // (draw phase only), so this infinite 1200ms animation — active for up to 4s on
+    // every single move step while the AI explanation loads — no longer recomposes
+    // this composable (and rebuilds a Brush) on every one of its frames.
+    val translateX = transition.animateFloat(
         initialValue  = -300f,
         targetValue   = 300f,
         animationSpec = infiniteRepeatable(
@@ -1045,29 +1112,36 @@ private fun ShimmerExplanation() {
         ),
         label = "shimmer_translate",
     )
-    val brush = Brush.linearGradient(
-        colors = listOf(
-            Color.White.copy(alpha = 0.04f),
-            Color.White.copy(alpha = 0.10f),
-            Color.White.copy(alpha = 0.04f),
-        ),
-        start  = Offset(translateX, 0f),
-        end    = Offset(translateX + 200f, 0f),
-    )
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(11.dp)
                 .clip(RoundedCornerShape(4.dp))
-                .background(brush),
+                .drawBehind {
+                    drawRect(
+                        brush = Brush.linearGradient(
+                            colors = ShimmerColors,
+                            start  = Offset(translateX.value, 0f),
+                            end    = Offset(translateX.value + 200f, 0f),
+                        )
+                    )
+                },
         )
         Box(
             modifier = Modifier
                 .fillMaxWidth(0.72f)
                 .height(11.dp)
                 .clip(RoundedCornerShape(4.dp))
-                .background(brush),
+                .drawBehind {
+                    drawRect(
+                        brush = Brush.linearGradient(
+                            colors = ShimmerColors,
+                            start  = Offset(translateX.value, 0f),
+                            end    = Offset(translateX.value + 200f, 0f),
+                        )
+                    )
+                },
         )
     }
 }

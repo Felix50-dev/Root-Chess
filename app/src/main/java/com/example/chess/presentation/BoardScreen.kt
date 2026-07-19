@@ -48,7 +48,6 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -81,7 +80,6 @@ import com.example.chess.R
 import com.example.chess.data.model.Bishop
 import com.example.chess.data.model.ChessPiece
 import com.example.chess.data.model.GameStatus
-import com.example.chess.data.model.King
 import com.example.chess.data.model.Knight
 import com.example.chess.data.model.Player
 import com.example.chess.data.model.Position
@@ -89,7 +87,11 @@ import com.example.chess.data.model.Queen
 import com.example.chess.data.model.Rook
 import com.example.chess.data.model.SANMovePair
 import com.example.chess.data.model.Spot
+import com.example.chess.presentation.model.SquareUiState
 import com.example.chess.presentation.model.VisualPiece
+import com.example.chess.presentation.model.buildSquareUiStates
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.collections.immutable.ImmutableList
 import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
 
@@ -101,17 +103,17 @@ fun ChessGameScreen(
     onExitGame: () -> Unit,
     onAnalyzeGame: () -> Unit,
 ) {
-    val boardState by chessGameViewModel.boardState.collectAsState()
+    val boardState by chessGameViewModel.boardState.collectAsStateWithLifecycle()
     Log.d("ChessBoard", "Observed lastMovedFrom: ${boardState.lastMovedFrom}")
-    val validMoves by chessGameViewModel.validMoves.collectAsState()
-    val isInCheck by chessGameViewModel.isInCheck.collectAsState()
-    val checkPosition by chessGameViewModel.checkPosition.collectAsState()
-    val piecesKilled by chessGameViewModel.piecesKilled.collectAsState()
-    val movesMadeSAN by chessGameViewModel.movesMadeSAN.collectAsState()
-    val lastMove by chessGameViewModel.lastMove.collectAsState()
-    val aiLastMove by chessGameViewModel.aiLastMove.collectAsState()
-    val showPawnPromotion by chessGameViewModel.showPawnPromotion.collectAsState()
-    val visualPieces by chessGameViewModel.visualPieces.collectAsState()
+    val validMoves by chessGameViewModel.validMoves.collectAsStateWithLifecycle()
+    val isInCheck by chessGameViewModel.isInCheck.collectAsStateWithLifecycle()
+    val checkPosition by chessGameViewModel.checkPosition.collectAsStateWithLifecycle()
+    val piecesKilled by chessGameViewModel.piecesKilled.collectAsStateWithLifecycle()
+    val movesMadeSAN by chessGameViewModel.movesMadeSAN.collectAsStateWithLifecycle()
+    val lastMove by chessGameViewModel.lastMove.collectAsStateWithLifecycle()
+    val aiLastMove by chessGameViewModel.aiLastMove.collectAsStateWithLifecycle()
+    val showPawnPromotion by chessGameViewModel.showPawnPromotion.collectAsStateWithLifecycle()
+    val visualPieces by chessGameViewModel.visualPieces.collectAsStateWithLifecycle()
     Log.d(TAG, "ChessGameScreen: pieces killed are: $piecesKilled")
 
     val context = LocalContext.current
@@ -179,7 +181,7 @@ fun ChessGameScreen(
                 movesMadeSan = movesMadeSAN,
                 showPromotionDialog = showPawnPromotion,
                 aiLastMove = aiLastMove,
-                visualPieces = visualPieces as MutableList<VisualPiece>
+                visualPieces = visualPieces
             )
         }
         Log.d(TAG, "ChessGameScreen last moved piece: ${boardState.lastMovedFrom}")
@@ -466,7 +468,7 @@ fun ChessGrid(
     movesMadeSan: MutableList<SANMovePair>,
     showPromotionDialog: Boolean,
     aiLastMove: Move?,
-    visualPieces: MutableList<VisualPiece>
+    visualPieces: ImmutableList<VisualPiece>
 ) {
 
     remember(boardState.board) {
@@ -635,30 +637,31 @@ fun ChessGrid(
                     with(LocalDensity.current) { it.toDp() }
                 }
 
+                val squareStates = remember(boardState.board, validMoves, lastMove, aiLastMove, isInCheck, checkPosition) {
+                    buildSquareUiStates(boardState.board, validMoves, lastMove, aiLastMove, isInCheck, checkPosition)
+                }
+
                 Box(
                     modifier = Modifier
                         .size(squareSize * 8)
                 ) {
                     Column {
-                        boardState.board?.boxes?.forEachIndexed { row, rowData ->
+                        squareStates.chunked(8).forEach { rowStates ->
                             Row {
-                                rowData.forEachIndexed { column, spot ->
-                                    ChessSquare(
-                                        isWhite = (row + column) % 2 == 0,
-                                        spot = spot,
-                                        isInCheck = isInCheck,
-                                        checkPosition = checkPosition,
-                                        validMoves = validMoves,
-                                        onSelectSpot = { selectedSpot ->
-                                            onSelectSpot(selectedSpot)
-                                        },
-                                        onMovePieceTo = { position ->
-                                            onMovePieceTo(position)
-                                        },
-                                        squareSize = squareSize,
-                                        lastMove = lastMove,
-                                        aiLastMove = aiLastMove
-                                    )
+                                rowStates.forEach { square ->
+                                    key(square.position.row, square.position.column) {
+                                        ChessSquare(
+                                            square = square,
+                                            onSelectSpot = { pos ->
+                                                boardState.board?.getBox(pos.row, pos.column)
+                                                    ?.let { spot -> onSelectSpot(spot) }
+                                            },
+                                            onMovePieceTo = { position ->
+                                                onMovePieceTo(position)
+                                            },
+                                            squareSize = squareSize,
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -758,42 +761,26 @@ fun ChessGrid(
 
 @Composable
 fun ChessSquare(
-    isWhite: Boolean,
-    spot: Spot,
-    isInCheck: Boolean,
-    checkPosition: Position,
-    validMoves: List<Position>,
-    onSelectSpot: (Spot) -> Unit,
+    square: SquareUiState,
+    onSelectSpot: (Position) -> Unit,
     onMovePieceTo: (Position) -> Unit,
     squareSize: Dp,
-    lastMove: Move?,
-    aiLastMove: Move?
 ) {
-    val currentPosition = spot.position
-    val piece = spot.chessPiece
-    val isValidMove = validMoves.contains(currentPosition)
-    val isCapturableTarget = isValidMove && piece != null
-
-    val backgroundColor = if (isWhite) Color.White else Color(0xFFA26232)
+    val backgroundColor = if (square.isWhite) Color.White else Color(0xFFA26232)
 
     Box(
         modifier = Modifier
             .size(squareSize)
             .background(backgroundColor)
             .clickable {
-                if (isValidMove) {
-                    onMovePieceTo(currentPosition)
+                if (square.isValidMove) {
+                    onMovePieceTo(square.position)
                 } else {
-                    onSelectSpot(spot)
+                    onSelectSpot(square.position)
                 }
             }
             .then(
-                if (
-                    currentPosition == lastMove?.from ||
-                    currentPosition == lastMove?.to ||
-                    currentPosition == aiLastMove?.from ||
-                    currentPosition == aiLastMove?.to
-                ) {
+                if (square.isLastMoveHighlight) {
                     Modifier.background(
                         Brush.verticalGradient(
                             listOf(Color.Transparent, Color.Green.copy(alpha = 0.3f))
@@ -808,13 +795,12 @@ fun ChessSquare(
                 .matchParentSize()
                 .border(
                     3.dp,
-                    if (piece is King && isInCheck && currentPosition == checkPosition)
-                        Color.Red else Color.Transparent
+                    if (square.isCheckedSquare) Color.Red else Color.Transparent
                 )
         )
 
         // Empty square valid move — small dot in center
-        if (isValidMove && !isCapturableTarget) {
+        if (square.isValidMove && !square.isCapturableTarget) {
             Box(
                 modifier = Modifier
                     .size(12.dp)
@@ -826,7 +812,7 @@ fun ChessSquare(
                     .zIndex(20f)   // above pieces layer
             )
         }
-        if (isCapturableTarget) {
+        if (square.isCapturableTarget) {
             Box(
                 modifier = Modifier
                     .matchParentSize()
@@ -898,7 +884,7 @@ fun AnimatedChessPiece(piece: VisualPiece, squareSize: Dp) {
 
 @Composable
 fun PiecesLayer(
-    pieces: List<VisualPiece>,
+    pieces: ImmutableList<VisualPiece>,
     squareSize: Dp
 ) {
     Box(Modifier.fillMaxSize()) {

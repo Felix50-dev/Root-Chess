@@ -57,8 +57,10 @@ class Board @Inject constructor() {
         // Create a deep copy of the `boxes` property
         val clonedBoxes = boxes.map { row ->
             row.map { spot ->
-                // Clone the Spot
-                val clonedPosition = Position(spot.position.row, spot.position.column)
+                // Position is an immutable value (val row, val column) — reuse it directly
+                // instead of allocating a duplicate. Only the mutable ChessPiece/Spot wrappers
+                // need real copies to keep the clone isolated from the live board.
+                val clonedPosition = spot.position
                 val clonedPiece = spot.chessPiece?.let { piece ->
                     // hasMoved must carry over — omitting it (as before) makes a clone
                     // think every piece is still on its starting square for castling
