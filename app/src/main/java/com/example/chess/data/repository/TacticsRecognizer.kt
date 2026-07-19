@@ -56,7 +56,13 @@ class TacticsRecognizer @Inject constructor(
 
         Log.d(TAG, "isFork: attacked pieces are $attackedPieces")
 
-        return if (attackedPieces.size >= 2) "Fork" else null
+        if (attackedPieces.size < 2) return null
+
+        // A fork that just hangs the forking piece for free isn't a real threat — the
+        // opponent simply takes it instead of losing one of the forked pieces.
+        if (isPieceHangingForFree(tempBoard, piece, move.to.position)) return null
+
+        return "Fork"
     }
 
 
@@ -198,6 +204,12 @@ class TacticsRecognizer @Inject constructor(
             else -> return null
         }
 
+        // A skewer that just hangs the skewering piece for free isn't a real threat —
+        // the opponent simply takes it instead of losing the piece behind. This is a
+        // property of the piece's destination square, not of any one direction, so it
+        // only needs to be checked once.
+        val isHanging = isPieceHangingForFree(tempBoard, piece, move.to.position)
+
         for ((dr, dc) in directions) {
             var r = move.to.position.row + dr
             var c = move.to.position.column + dc
@@ -222,7 +234,7 @@ class TacticsRecognizer @Inject constructor(
             }
 
             if (firstPiece != null && secondPiece != null &&
-                pieceValue(firstPiece) > pieceValue(secondPiece)
+                pieceValue(firstPiece) > pieceValue(secondPiece) && !isHanging
             ) {
                 return "Skewer"
             }
@@ -230,6 +242,50 @@ class TacticsRecognizer @Inject constructor(
 
         return null
         // No undo needed — tempBoard is a clone
+    }
+
+    // Returns true if `piece` (at `position` on `board`) would be captured for free by
+    // the opponent: attacked and either undefended, or only defended by something that
+    // would still leave the opponent net ahead in value.
+    private fun isPieceHangingForFree(board: Board, piece: ChessPiece, position: Position): Boolean {
+        val opponentColor = if (piece.color == Color.WHITE) Color.BLACK else Color.WHITE
+        val targetSquare = board.getBox(position.row, position.column)
+
+        var cheapestAttacker: Int? = null
+        for (row in 0..7) {
+            for (col in 0..7) {
+                val attacker = board.getBox(row, col).chessPiece ?: continue
+                if (attacker.color != opponentColor) continue
+                if (attacker.canMove(board, board.getBox(row, col), targetSquare)) {
+                    cheapestAttacker = minOf(cheapestAttacker ?: Int.MAX_VALUE, attacker.value)
+                }
+            }
+        }
+        val attackerValue = cheapestAttacker ?: return false  // not attacked at all
+
+        // canMove() refuses to "capture" a square occupied by a friendly piece, so
+        // checking defenders directly against `board` would always find none (every
+        // defender would see its own side's piece still sitting there). Simulate an
+        // enemy piece having just captured on that square instead, so canMove() can
+        // answer the real geometric question — including for pawns, whose diagonal
+        // capture move specifically requires an enemy piece present on the target.
+        val afterCapture = board.clone()
+        afterCapture.getBox(position.row, position.column).chessPiece =
+            Pawn(color = opponentColor, position = position, isKilled = false)
+
+        val isDefended = (0..7).any { row ->
+            (0..7).any { col ->
+                val defender = afterCapture.getBox(row, col).chessPiece
+                defender != null && defender.color == piece.color &&
+                    defender.canMove(
+                        afterCapture,
+                        afterCapture.getBox(row, col),
+                        afterCapture.getBox(position.row, position.column)
+                    )
+            }
+        }
+
+        return !isDefended || attackerValue < piece.value
     }
 
     private fun pieceValue(piece: ChessPiece): Int {
