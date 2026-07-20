@@ -463,6 +463,7 @@ class King(
             rookEnd.chessPiece   = rook
             rookStart.chessPiece = null
             rook.position        = rookEnd.position
+            rook.hasMoved        = true
 
         } else if (colDiff == -2) {
             // ── Queen-side ────────────────────────────────────────────────────────
@@ -479,6 +480,7 @@ class King(
             rookEnd.chessPiece   = rook
             rookStart.chessPiece = null
             rook.position        = rookEnd.position
+            rook.hasMoved        = true
         }
     }
 

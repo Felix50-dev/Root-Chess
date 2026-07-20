@@ -341,6 +341,34 @@ class CastlingTest {
             Position(7, 3), rook.position)
     }
 
+    // castlingMove() used to only set the king's hasMoved — the rook itself silently
+    // misreported its own history. Currently masked in practice (the king's own
+    // hasMoved gate already blocks re-castling), but a real data-integrity gap.
+
+    @Test
+    fun castlingMove_kingSide_rookHasMovedIsSetTrue() {
+        val king = King(color = Color.WHITE, position = Position(7, 4), isKilled = false)
+        val rook = Rook(color = Color.WHITE, position = Position(7, 7), isKilled = false)
+        place(king, 7, 4)
+        place(rook, 7, 7)
+
+        doCastle(king, 7, 4, 6)
+
+        assertTrue("Rook's hasMoved should be true after king-side castling", rook.hasMoved)
+    }
+
+    @Test
+    fun castlingMove_queenSide_rookHasMovedIsSetTrue() {
+        val king = King(color = Color.WHITE, position = Position(7, 4), isKilled = false)
+        val rook = Rook(color = Color.WHITE, position = Position(7, 0), isKilled = false)
+        place(king, 7, 4)
+        place(rook, 7, 0)
+
+        doCastle(king, 7, 4, 2)
+
+        assertTrue("Rook's hasMoved should be true after queen-side castling", rook.hasMoved)
+    }
+
     // ── Black castling ────────────────────────────────────────────────────────
 
     @Test
