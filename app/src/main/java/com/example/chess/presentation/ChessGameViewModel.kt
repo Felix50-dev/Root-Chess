@@ -456,6 +456,12 @@ class ChessGameViewModel @Inject constructor(
         isPromotionPending = false
 
         syncAfterBoardChange()
+        // syncAfterBoardChange() clones the board so Compose sees a fresh reference and
+        // recomposes — but that leaves _boardState.board pointed at an orphaned clone.
+        // The next square tap would resolve its Spot (and thus its ChessPiece) from that
+        // clone instead of the live board, corrupting things like hasMoved. Restore the
+        // live reference, same as movePieceTo already does after its own move.
+        _boardState.value = _boardState.value.copy(board = game.board)
 
         val currentPlayer = game.currentTurn.value
         if (currentPlayer?.playerType == PlayerType.AI && !game.isGameOver) {
@@ -932,6 +938,8 @@ class ChessGameViewModel @Inject constructor(
 
         refreshLastMoveHighlight()
         syncAfterBoardChange()
+        // Restore the live board reference — see the comment in setPromotedPiece() for why.
+        _boardState.value = _boardState.value.copy(board = game.board)
     }
 
     fun redoMove() {
@@ -952,6 +960,8 @@ class ChessGameViewModel @Inject constructor(
 
         refreshLastMoveHighlight()
         syncAfterBoardChange()
+        // Restore the live board reference — see the comment in setPromotedPiece() for why.
+        _boardState.value = _boardState.value.copy(board = game.board)
     }
 
     // lastMove/aiLastMove both feed the same square-highlight state (see
