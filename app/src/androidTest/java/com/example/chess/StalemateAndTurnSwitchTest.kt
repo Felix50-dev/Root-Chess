@@ -5,6 +5,7 @@ import com.example.chess.data.model.Board
 import com.example.chess.data.model.Color
 import com.example.chess.data.model.GameStatus
 import com.example.chess.data.model.King
+import com.example.chess.data.model.Knight
 import com.example.chess.data.model.Pawn
 import com.example.chess.data.model.Player
 import com.example.chess.data.model.PlayerType
@@ -47,6 +48,45 @@ class StalemateAndTurnSwitchTest {
         val fromSpot = board.getBox(from.row, from.column)
         val toSpot = board.getBox(to.row, to.column)
         return game.handleHumanMove(player, fromSpot, toSpot, false, board)
+    }
+
+    // isStalemate() used to declare its "positions illegal because they'd leave the
+    // king in check" list *outside* the per-piece loop, so one piece's illegal
+    // destination could wrongly strip a different piece's legal move if they happened
+    // to share a target square. This position sets up exactly that collision:
+    //
+    //   Row 0: K p . . . . . .   (Black King a8, Black Pawn b8)
+    //   Row 1: N p . . . . . .   (White Knight a7, Black Pawn b7)
+    //   Row 2: . P . . . . . .   (White Pawn b6 — blocks b7's push)
+    //   Row 3: . n . . . . . .   (White Knight b5 — defends a7)
+    //   Row 7: . . . . . . . K   (White King h1)
+    //
+    // Black king's only geometric candidate is capturing the knight on a7 — illegal,
+    // since the b5 knight still attacks a7 afterward (added to the shared list under
+    // the bug). Black's b8 pawn's only candidate is *also* a7 (bxa7) — a completely
+    // different, genuinely legal move (capturing doesn't expose the king to check at
+    // all) that the leaked list would incorrectly strip too. Black's b7 pawn has no
+    // moves at all. So: under the bug, every black piece ends up with an empty move
+    // list -> false stalemate. Fixed, bxa7 correctly survives -> not stalemate.
+    @Test
+    fun isStalemate_doesNotFalselyTrigger_whenDifferentPiecesShareAnIllegalDestination() {
+        place(King(color = Color.BLACK, position = Position(0, 0), isKilled = false), 0, 0)
+        place(Pawn(color = Color.BLACK, position = Position(0, 1), isKilled = false), 0, 1)
+        place(Pawn(color = Color.BLACK, position = Position(1, 1), isKilled = false), 1, 1)
+        place(Knight(color = Color.WHITE, position = Position(1, 0), isKilled = false), 1, 0)
+        place(Pawn(color = Color.WHITE, position = Position(2, 1), isKilled = false), 2, 1)
+        place(Knight(color = Color.WHITE, position = Position(3, 1), isKilled = false), 3, 1)
+        place(King(color = Color.WHITE, position = Position(7, 7), isKilled = false), 7, 7)
+        game.currentTurn.value = player1
+
+        // A harmless white move to trigger checkForWinner() for black's position.
+        assertTrue(makeMove(Position(7, 7), Position(6, 7), player1))
+
+        assertEquals(
+            "bxa7 is a genuinely legal escape — this must not be reported as stalemate",
+            GameStatus.ACTIVE,
+            game.status
+        )
     }
 
     // handleHumanMove() used to gate changeCurrentTurn()/return true on !isGameOver, so

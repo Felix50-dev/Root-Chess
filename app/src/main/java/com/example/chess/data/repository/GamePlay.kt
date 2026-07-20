@@ -1511,9 +1511,12 @@ class GamePlay @Inject constructor(
         val opponent = if (player.isWhite) players[1] else players[0]
         // Check if the current player has any legal moves
         val pieces = getAlivePieces(player, board)
-        val invalidPositions = mutableListOf<Position>()
         currentTurn.value = player
         for (piece in pieces) {
+            // Must reset per piece — a destination that's illegal (into check) for one
+            // piece says nothing about whether the same square is a legal, different
+            // piece's move, so this can't be shared/accumulated across pieces.
+            val invalidPositions = mutableListOf<Position>()
             val validMoves = getValidMoves(piece.position, player, board)
             for (position in validMoves) {
                 val move = Move(
