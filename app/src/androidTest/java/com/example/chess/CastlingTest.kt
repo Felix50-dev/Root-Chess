@@ -416,6 +416,57 @@ class CastlingTest {
         )
     }
 
+    // ── Regression: undo must preserve isCastlingMove and restore rook.hasMoved ─
+    //
+    // The undo helpers used to permanently clear the shared Move's isCastlingMove flag
+    // after reversing a castle (breaking Game Review's Next/Previous/Next replay of the
+    // same move) and never restored the rook's hasMoved (breaking re-castling after an
+    // in-game Undo).
+
+    @Test
+    fun undoMoveByPlayer_afterCastling_preservesIsCastlingMoveFlag() {
+        val king = King(color = Color.WHITE, position = Position(7, 4), isKilled = false)
+        val rook = Rook(color = Color.WHITE, position = Position(7, 7), isKilled = false)
+        place(king, 7, 4)
+        place(rook, 7, 7)
+        place(King(color = Color.BLACK, position = Position(0, 4), isKilled = false), 0, 4)
+        game.currentTurn.value = player1
+
+        assertTrue(
+            "Castling move should succeed",
+            game.handleHumanMove(player1, spotAt(7, 4), spotAt(7, 6), false, board)
+        )
+        val move = game.movesPlayed.last()
+
+        game.undoMoveByPlayer(move)
+        game.changeCurrentTurn()
+
+        assertTrue(
+            "isCastlingMove must still describe what the move was, even after undo",
+            move.isCastlingMove
+        )
+    }
+
+    @Test
+    fun undoMoveByPlayer_afterCastling_restoresRookHasMovedAndCastlingRight() {
+        val king = King(color = Color.WHITE, position = Position(7, 4), isKilled = false)
+        val rook = Rook(color = Color.WHITE, position = Position(7, 7), isKilled = false)
+        place(king, 7, 4)
+        place(rook, 7, 7)
+        place(King(color = Color.BLACK, position = Position(0, 4), isKilled = false), 0, 4)
+        game.currentTurn.value = player1
+
+        assertTrue(game.handleHumanMove(player1, spotAt(7, 4), spotAt(7, 6), false, board))
+        assertTrue("Sanity check: rook should have moved", rook.hasMoved)
+        val move = game.movesPlayed.last()
+
+        game.undoMoveByPlayer(move)
+        game.changeCurrentTurn()
+
+        assertFalse("Rook's hasMoved should be restored to false after undo", rook.hasMoved)
+        assertTrue("Castling should be legal again after undo", canCastle(king, 7, 4, 6))
+    }
+
     // ── Black castling ────────────────────────────────────────────────────────
 
     @Test

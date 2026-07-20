@@ -1565,6 +1565,9 @@ class GamePlay @Inject constructor(
                 val rookEndSpot = myBoard.getBox(startSpot.position.row, rookEndColumn)
                 rookStartSpot.chessPiece = rookEndSpot.chessPiece
                 rookEndSpot.chessPiece = null
+                // A rook can only ever have castled if it hadn't moved before — safe to
+                // restore unconditionally, real or simulated undo alike.
+                rookStartSpot.chessPiece?.hasMoved = false
 
                 //move the king back to its original position
                 val kingStartColumn = startSpot.position.column
@@ -1583,6 +1586,7 @@ class GamePlay @Inject constructor(
                 val rookEndSpot = myBoard.getBox(startSpot.position.row, rookEndColumn)
                 rookStartSpot.chessPiece = rookEndSpot.chessPiece
                 rookEndSpot.chessPiece = null
+                rookStartSpot.chessPiece?.hasMoved = false
                 //move the king back to its original position
                 val kingStartColumn = startSpot.position.column
                 val kingEndColumn = endSpot.position.column
@@ -1591,7 +1595,6 @@ class GamePlay @Inject constructor(
                 kingStartSpot.chessPiece = kingEndSpot.chessPiece
                 kingEndSpot.chessPiece = null
             }
-            move.isCastlingMove = false
             //movesPlayed.remove(move)
         } else if (move.isEnPassant) {
             // Calculate the position of the captured pawn based on the end spot
@@ -1642,6 +1645,9 @@ class GamePlay @Inject constructor(
                 val rookEndSpot = myBoard.getBox(startSpot.position.row, rookEndColumn)
                 rookStartSpot.chessPiece = rookEndSpot.chessPiece
                 rookEndSpot.chessPiece = null
+                // A rook can only ever have castled if it hadn't moved before — safe to
+                // restore unconditionally, real or simulated undo alike.
+                rookStartSpot.chessPiece?.hasMoved = false
 
                 val kingStartSpot =
                     myBoard.getBox(startSpot.position.row, startSpot.position.column)
@@ -1656,6 +1662,7 @@ class GamePlay @Inject constructor(
                 val rookEndSpot = myBoard.getBox(startSpot.position.row, rookEndColumn)
                 rookStartSpot.chessPiece = rookEndSpot.chessPiece
                 rookEndSpot.chessPiece = null
+                rookStartSpot.chessPiece?.hasMoved = false
 
                 val kingStartSpot =
                     myBoard.getBox(startSpot.position.row, startSpot.position.column)
@@ -1663,7 +1670,6 @@ class GamePlay @Inject constructor(
                 kingStartSpot.chessPiece = kingEndSpot.chessPiece
                 kingEndSpot.chessPiece = null
             }
-            move.isCastlingMove = false
 
         } else if (move.isEnPassant) {
             val capturedPawnPosition = Position(startSpot.position.row, endSpot.position.column)
@@ -1720,6 +1726,9 @@ class GamePlay @Inject constructor(
                 board.getBox(startSpot.position.row, rookStartColumn).chessPiece =
                     rookEndSpot.chessPiece
                 rookEndSpot.chessPiece = null
+                // A rook can only ever have castled if it hadn't moved before — safe to
+                // restore unconditionally, real or simulated undo alike.
+                rookStartSpot.chessPiece?.hasMoved = false
 
                 //move the king back to its original position
                 val kingStartColumn = startSpot.position.column
@@ -1738,6 +1747,7 @@ class GamePlay @Inject constructor(
                 val rookEndSpot = board.getBox(startSpot.position.row, rookEndColumn)
                 rookStartSpot.chessPiece = rookEndSpot.chessPiece
                 rookEndSpot.chessPiece = null
+                rookStartSpot.chessPiece?.hasMoved = false
                 //move the king back to its original position
                 val kingStartColumn = startSpot.position.column
                 val kingEndColumn = endSpot.position.column
@@ -1746,7 +1756,6 @@ class GamePlay @Inject constructor(
                 kingStartSpot.chessPiece = kingEndSpot.chessPiece
                 kingEndSpot.chessPiece = null
             }
-            move.isCastlingMove = false
             if (!isReviewMode) {
                 movesUndone.add(move)
                 movesPlayed.remove(move)
