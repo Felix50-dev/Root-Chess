@@ -445,13 +445,18 @@ class King(
         }
     }
 
-    fun castlingMove(start: Spot, end: Spot, board: Board) {
+    // Returns the rook that was moved so the caller can decide whether to mark it as
+    // having moved — this runs from both a real committed move (GamePlay.makeMove) and
+    // a purely speculative legality scan (GamePlay.simulateMove, used just to compute
+    // valid-move dots or test for check), so it must not mutate hasMoved itself. Mirrors
+    // how the king's own hasMoved is likewise set by the caller, only for real moves.
+    fun castlingMove(start: Spot, end: Spot, board: Board): Rook? {
         val colDiff = end.position.column - start.position.column
 
         if (colDiff == 2) {
             // ── King-side ─────────────────────────────────────────────────────────
             val rookStart = board.getBox(start.position.row, Board.NUM_COLUMNS - 1)
-            val rook = rookStart.chessPiece as? Rook ?: return
+            val rook = rookStart.chessPiece as? Rook ?: return null
 
             // Move king: e1 → g1  (col 4 → col 6)
             end.chessPiece   = this
@@ -463,12 +468,12 @@ class King(
             rookEnd.chessPiece   = rook
             rookStart.chessPiece = null
             rook.position        = rookEnd.position
-            rook.hasMoved        = true
+            return rook
 
         } else if (colDiff == -2) {
             // ── Queen-side ────────────────────────────────────────────────────────
             val rookStart = board.getBox(start.position.row, 0)
-            val rook = rookStart.chessPiece as? Rook ?: return
+            val rook = rookStart.chessPiece as? Rook ?: return null
 
             // Move king: e1 → c1  (col 4 → col 2)
             end.chessPiece   = this
@@ -480,8 +485,9 @@ class King(
             rookEnd.chessPiece   = rook
             rookStart.chessPiece = null
             rook.position        = rookEnd.position
-            rook.hasMoved        = true
+            return rook
         }
+        return null
     }
 
     // Extension functions

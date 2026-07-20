@@ -1201,7 +1201,7 @@ class GamePlay @Inject constructor(
         // Castling
         if (sourcePiece is King && sourcePiece.canCastle(move.from, move.to, myBoard)) {
             move.isCastlingMove = true
-            sourcePiece.castlingMove(move.from, move.to, myBoard)
+            sourcePiece.castlingMove(move.from, move.to, myBoard)?.hasMoved = true
             sourcePiece.hasMoved = true
             movesPlayed.add(move)
             myBoard.enPassantTarget = null

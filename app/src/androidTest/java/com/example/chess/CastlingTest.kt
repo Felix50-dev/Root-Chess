@@ -341,32 +341,79 @@ class CastlingTest {
             Position(7, 3), rook.position)
     }
 
-    // castlingMove() used to only set the king's hasMoved — the rook itself silently
-    // misreported its own history. Currently masked in practice (the king's own
-    // hasMoved gate already blocks re-castling), but a real data-integrity gap.
+    // castlingMove() runs from both a real committed move (GamePlay.makeMove) and a
+    // purely speculative legality scan (GamePlay.simulateMove, used to compute
+    // valid-move dots) — it must not set hasMoved itself, only report which rook moved,
+    // so the caller can decide (mirrors how the king's own hasMoved is handled). See
+    // getRemainingValidMoves_scanningCastlingSquare_doesNotPoisonRookHasMoved and
+    // undoMoveByPlayer_afterCastling_restoresRookHasMovedAndCastlingRight below for the
+    // real-move contract this enables.
 
     @Test
-    fun castlingMove_kingSide_rookHasMovedIsSetTrue() {
+    fun castlingMove_kingSide_returnsTheRookItMoved() {
         val king = King(color = Color.WHITE, position = Position(7, 4), isKilled = false)
         val rook = Rook(color = Color.WHITE, position = Position(7, 7), isKilled = false)
         place(king, 7, 4)
         place(rook, 7, 7)
 
-        doCastle(king, 7, 4, 6)
+        val moved = king.castlingMove(spotAt(7, 4), spotAt(7, 6), board)
 
-        assertTrue("Rook's hasMoved should be true after king-side castling", rook.hasMoved)
+        assertEquals("castlingMove should return the rook it moved", rook, moved)
+        assertFalse(
+            "castlingMove itself must not set hasMoved — it also runs during " +
+                "speculative legality scans, which must not mutate committed state",
+            rook.hasMoved
+        )
     }
 
     @Test
-    fun castlingMove_queenSide_rookHasMovedIsSetTrue() {
+    fun castlingMove_queenSide_returnsTheRookItMoved() {
         val king = King(color = Color.WHITE, position = Position(7, 4), isKilled = false)
         val rook = Rook(color = Color.WHITE, position = Position(7, 0), isKilled = false)
         place(king, 7, 4)
         place(rook, 7, 0)
 
-        doCastle(king, 7, 4, 2)
+        val moved = king.castlingMove(spotAt(7, 4), spotAt(7, 2), board)
 
-        assertTrue("Rook's hasMoved should be true after queen-side castling", rook.hasMoved)
+        assertEquals("castlingMove should return the rook it moved", rook, moved)
+        assertFalse(
+            "castlingMove itself must not set hasMoved — it also runs during " +
+                "speculative legality scans, which must not mutate committed state",
+            rook.hasMoved
+        )
+    }
+
+    // ── Regression: computing valid-move dots must not poison castling rights ──
+    //
+    // castlingMove() runs both for a real committed move (GamePlay.makeMove) and for a
+    // purely speculative legality scan (GamePlay.simulateMove, used by
+    // getRemainingValidMoves to compute the valid-move dots shown after selecting a
+    // piece). It used to set the rook's hasMoved unconditionally, so merely selecting
+    // the king — before making any real move — permanently broke castling.
+
+    @Test
+    fun getRemainingValidMoves_scanningCastlingSquare_doesNotPoisonRookHasMoved() {
+        val king = King(color = Color.WHITE, position = Position(7, 4), isKilled = false)
+        val rook = Rook(color = Color.WHITE, position = Position(7, 7), isKilled = false)
+        place(king, 7, 4)
+        place(rook, 7, 7)
+        place(King(color = Color.BLACK, position = Position(0, 4), isKilled = false), 0, 4)
+        game.currentTurn.value = player1
+
+        val validMoves = game.getRemainingValidMoves(Position(7, 4), player1, board)
+
+        assertTrue(
+            "King-side castling square should be offered as a valid move",
+            validMoves.contains(Position(7, 6))
+        )
+        assertFalse(
+            "Merely computing valid moves must not mark the rook as having moved",
+            rook.hasMoved
+        )
+        assertTrue(
+            "Castling must still be legal after the scan",
+            canCastle(king, 7, 4, 6)
+        )
     }
 
     // ── Black castling ────────────────────────────────────────────────────────
