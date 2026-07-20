@@ -144,10 +144,14 @@ class GamePlay @Inject constructor(
                     // replaying it via Redo would insert a stale move into a now-divergent
                     // game history (e.g. two same-color moves in a row).
                     movesUndone.clear()
-                    if (!isGameOver) {
-                        changeCurrentTurn()
-                        return true
-                    }
+                    // Always switch the turn and report success, even when this move just
+                    // ended the game — the isGameOver check at the top of this function
+                    // already blocks any further moves once the game is over, so gating
+                    // the turn switch here too serves no purpose. It used to leave
+                    // currentTurn stuck on the mating player, which let the "Show Board"
+                    // flow allow that same player to move again immediately.
+                    changeCurrentTurn()
+                    return true
                 }
             } else {
                 Log.d(TAG, "handleHumanMove: a move undone")

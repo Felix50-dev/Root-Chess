@@ -360,7 +360,9 @@ class ChessGameViewModel @Inject constructor(
         aiJob = viewModelScope.launch(Dispatchers.Main) {
             game.currentTurn
                 .collect { currentPlayer ->
-                    if (currentPlayer?.playerType == PlayerType.AI && !isPromotionPending) {
+                    if (currentPlayer?.playerType == PlayerType.AI && !isPromotionPending &&
+                        !game.isGameOver
+                    ) {
                         handleAIMoveAndUpdateState(currentPlayer)
                     }
                 }
@@ -456,7 +458,7 @@ class ChessGameViewModel @Inject constructor(
         syncAfterBoardChange()
 
         val currentPlayer = game.currentTurn.value
-        if (currentPlayer?.playerType == PlayerType.AI) {
+        if (currentPlayer?.playerType == PlayerType.AI && !game.isGameOver) {
             viewModelScope.launch(Dispatchers.Main) {
                 handleAIMoveAndUpdateState(currentPlayer)
             }
@@ -502,7 +504,9 @@ class ChessGameViewModel @Inject constructor(
             aiJob = viewModelScope.launch(Dispatchers.Main) {
                 game.currentTurn
                     .collect { currentPlayer ->
-                        if (currentPlayer?.playerType == PlayerType.AI && !isPromotionPending) {
+                        if (currentPlayer?.playerType == PlayerType.AI && !isPromotionPending &&
+                            !game.isGameOver
+                        ) {
                             handleAIMoveAndUpdateState(currentPlayer)
                         }
                     }
