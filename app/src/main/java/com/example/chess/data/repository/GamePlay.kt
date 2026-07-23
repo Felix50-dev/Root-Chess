@@ -595,24 +595,20 @@ class GamePlay @Inject constructor(
         val selectedPiece = selectedSpot.chessPiece
         val playerColor = if (player.isWhite) Color.WHITE else Color.BLACK
         val validMovesForPiece = mutableListOf<Position>()
-        if (selectedPiece != null) {
-            if (selectedPiece.color == playerColor) {
-                for (row in 0 until Board.NUM_ROWS) {
-                    for (col in 0 until Board.NUM_COLUMNS) {
-                        val endPosition = Position(row, col)
-                        val endSpot = board.getBox(endPosition.row, endPosition.column)
-                        if (selectedPiece.canMove(
-                                board = board,
-                                start = selectedSpot,
-                                end = endSpot
-                            )
-                        ) {
-                            validMovesForPiece.add(endPosition)
-                        }
+        if (selectedPiece != null && selectedPiece.color == playerColor) {
+            // Iterate directly over board.boxes to avoid redundant getBox calls and Position allocation
+            for (row in board.boxes) {
+                for (spot in row) {
+                    if (selectedPiece.canMove(
+                            board = board,
+                            start = selectedSpot,
+                            end = spot
+                        )
+                    ) {
+                        validMovesForPiece.add(spot.position)
                     }
                 }
             }
-
         }
         return validMovesForPiece
     }
@@ -710,15 +706,12 @@ class GamePlay @Inject constructor(
 
 
     fun findKing(myBoard: Board, playerColor: Color): Spot? {
-        // Iterate through the board to find the king spot of the specified color
-        for (row in 0 until Board.NUM_ROWS) {
-            for (col in 0 until Board.NUM_COLUMNS) {
-                val spot = myBoard.getBox(row, col)
+        // Iterate through the board directly to find the king spot of the specified color
+        for (row in myBoard.boxes) {
+            for (spot in row) {
                 val piece = spot.chessPiece
-                if (piece != null && piece is King) {
-                    if (piece.color == playerColor) {
-                        return spot
-                    } // Found the king spot
+                if (piece != null && piece is King && piece.color == playerColor) {
+                    return spot
                 }
             }
         }
@@ -728,16 +721,13 @@ class GamePlay @Inject constructor(
     private fun getAlivePieces(player: Player, myBoard: Board): MutableList<ChessPiece> {
         val availablePieces = mutableListOf<ChessPiece>()
         val playerColor = if (player.isWhite) Color.WHITE else Color.BLACK
-        // Iterate through the board to find available pieces
-        for (row in 0 until 8) {
-            for (col in 0 until 8) {
-                if (myBoard.getBox(row, col).chessPiece != null) {
-                    if (playerColor == myBoard.getBox(row, col).chessPiece!!.color) {
-                        val chessPiece = myBoard.getBox(row, col).chessPiece
-                        val chessPiecePosition = Position(row, col)
-                        chessPiece!!.position = chessPiecePosition
-                        availablePieces += chessPiece
-                    }
+        // Iterate through the board directly to find available pieces
+        for (row in myBoard.boxes) {
+            for (spot in row) {
+                val piece = spot.chessPiece
+                if (piece != null && piece.color == playerColor) {
+                    piece.position = spot.position
+                    availablePieces += piece
                 }
             }
         }
