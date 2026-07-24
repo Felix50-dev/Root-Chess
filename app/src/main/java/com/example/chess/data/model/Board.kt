@@ -72,15 +72,12 @@ class Board @Inject constructor() {
     }
 
 
+    /**
+     * Bolt Optimization: Replaced O(N²) square-iteration loops with O(1) boundary checks.
+     * This eliminates redundant iteration over all 64 board squares for every validation.
+     */
     fun isValidPosition(position: Position): Boolean {
-        var isPositionValid = false
-        for (row in 0 until NUM_ROWS) {
-            for (column in 0 until NUM_COLUMNS) {
-                if (boxes[row][column].position == position
-                ) isPositionValid = true
-            }
-        }
-        return isPositionValid
+        return position.row in 0 until NUM_ROWS && position.column in 0 until NUM_COLUMNS
     }
 
 

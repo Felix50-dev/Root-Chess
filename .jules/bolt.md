@@ -1,0 +1,3 @@
+## 2024-11-18 - Direct Collection Iteration over Range Indexing and Getter Access
+**Learning:** In Kotlin, using range indexing (e.g., `0 until 8`) and getter helper functions (e.g., `Board.getBox(row, col)`) for 2D list iteration introduces significant bounds-checking, bounds-checking exception creation overhead, and index lookup overhead inside loops. Using Kotlin's native nested collection iteration (`for (row in board.boxes) { for (spot in row) { ... } }`) completely bypasses these bounds checks, leading to cleaner, safer, and much faster loop execution on hot code paths (such as chess piece scans).
+**Action:** Always favor native collection iterators or higher-order functions over custom index-based range loops when performing bulk scans over lists or matrices.
