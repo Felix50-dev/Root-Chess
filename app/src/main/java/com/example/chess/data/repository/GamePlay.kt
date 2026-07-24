@@ -709,35 +709,35 @@ class GamePlay @Inject constructor(
     }
 
 
+    /**
+     * Bolt Optimization: Replaced O(N²) index-based scanning with direct collection iteration over `boxes`.
+     * This eliminates 64 redundant bounds checks and potential exception allocations per scan.
+     */
     fun findKing(myBoard: Board, playerColor: Color): Spot? {
-        // Iterate through the board to find the king spot of the specified color
-        for (row in 0 until Board.NUM_ROWS) {
-            for (col in 0 until Board.NUM_COLUMNS) {
-                val spot = myBoard.getBox(row, col)
+        for (row in myBoard.boxes) {
+            for (spot in row) {
                 val piece = spot.chessPiece
-                if (piece != null && piece is King) {
-                    if (piece.color == playerColor) {
-                        return spot
-                    } // Found the king spot
+                if (piece is King && piece.color == playerColor) {
+                    return spot
                 }
             }
         }
         return null
     }
 
+    /**
+     * Bolt Optimization: Replaced O(N²) index-based scanning with direct collection iteration over `boxes`.
+     * Reuses the existing Spot's position object instead of allocating a new Position on every iteration.
+     */
     private fun getAlivePieces(player: Player, myBoard: Board): MutableList<ChessPiece> {
         val availablePieces = mutableListOf<ChessPiece>()
         val playerColor = if (player.isWhite) Color.WHITE else Color.BLACK
-        // Iterate through the board to find available pieces
-        for (row in 0 until 8) {
-            for (col in 0 until 8) {
-                if (myBoard.getBox(row, col).chessPiece != null) {
-                    if (playerColor == myBoard.getBox(row, col).chessPiece!!.color) {
-                        val chessPiece = myBoard.getBox(row, col).chessPiece
-                        val chessPiecePosition = Position(row, col)
-                        chessPiece!!.position = chessPiecePosition
-                        availablePieces += chessPiece
-                    }
+        for (row in myBoard.boxes) {
+            for (spot in row) {
+                val chessPiece = spot.chessPiece
+                if (chessPiece != null && chessPiece.color == playerColor) {
+                    chessPiece.position = spot.position
+                    availablePieces.add(chessPiece)
                 }
             }
         }
