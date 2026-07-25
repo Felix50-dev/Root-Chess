@@ -3,11 +3,14 @@ package com.example.chess.data.model
 import javax.inject.Inject
 
 
-class Board @Inject constructor() {
+class Board(initialBoxes: List<List<Spot>>?) {
+    @Inject constructor() : this(null)
+
     var boxes: List<List<Spot>>
 
     init {
-        boxes = resetBoard()
+        // If initialBoxes is provided, we bypass resetBoard() to avoid redundant allocations during cloning
+        boxes = initialBoxes ?: resetBoard()
     }
 
     fun getBox(x: Int, y: Int): Spot {
@@ -46,41 +49,31 @@ class Board @Inject constructor() {
 
 
     fun clone(): Board {
-        val clonedBoard = Board()
-
-        // Create a deep copy of the `boxes` property
+        // Create a deep copy of the `boxes` property and copy volatile states explicitly
         val clonedBoxes = boxes.map { row ->
             row.map { spot ->
                 // Clone the Spot
                 val clonedPosition = Position(spot.position.row, spot.position.column)
                 val clonedPiece = spot.chessPiece?.let { piece ->
                     when (piece) {
-                        is Pawn -> Pawn(piece.color, clonedPosition, piece.isKilled)
-                        is Rook -> Rook(piece.color, clonedPosition, piece.isKilled)
-                        is Knight -> Knight(piece.color, clonedPosition, piece.isKilled)
-                        is Bishop -> Bishop(piece.color, clonedPosition, piece.isKilled)
-                        is Queen -> Queen(piece.color, clonedPosition, piece.isKilled)
-                        is King -> King(piece.color, clonedPosition, piece.isKilled)
+                        is Pawn -> Pawn(piece.color, clonedPosition, piece.isKilled, piece.vectorAsset, piece.hasMoved, piece.canEnPassant, piece.value)
+                        is Rook -> Rook(piece.color, clonedPosition, piece.isKilled, piece.vectorAsset, piece.hasMoved, piece.canEnPassant, piece.value)
+                        is Knight -> Knight(piece.color, clonedPosition, piece.isKilled, piece.vectorAsset, piece.hasMoved, piece.canEnPassant, piece.value)
+                        is Bishop -> Bishop(piece.color, clonedPosition, piece.isKilled, piece.vectorAsset, piece.hasMoved, piece.canEnPassant, piece.value)
+                        is Queen -> Queen(piece.color, clonedPosition, piece.isKilled, piece.vectorAsset, piece.hasMoved, piece.canEnPassant, piece.value)
+                        is King -> King(piece.color, clonedPosition, piece.isKilled, piece.vectorAsset, piece.hasMoved, piece.canEnPassant, piece.value)
                     }
                 }
                 Spot(clonedPosition, clonedPiece)
             }
         }
-
-        clonedBoard.boxes = clonedBoxes
-        return clonedBoard
+        return Board(clonedBoxes)
     }
 
 
     fun isValidPosition(position: Position): Boolean {
-        var isPositionValid = false
-        for (row in 0 until NUM_ROWS) {
-            for (column in 0 until NUM_COLUMNS) {
-                if (boxes[row][column].position == position
-                ) isPositionValid = true
-            }
-        }
-        return isPositionValid
+        // O(1) boundary check is significantly faster than O(N^2) loop over all boxes
+        return position.row in 0 until NUM_ROWS && position.column in 0 until NUM_COLUMNS
     }
 
 
