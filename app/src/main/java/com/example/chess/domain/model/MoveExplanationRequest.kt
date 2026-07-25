@@ -32,7 +32,7 @@ data class MoveExplanationRequest(
                 movePlayed = result.bestMoves.getOrNull(index) ?: "",
                 bestMove = result.bestMoves.getOrNull(index),
                 chessPiece = captureOpportunity?.target?.toString(),
-                evalDelta = 0f, //result.losses.getOrNull(index)?.toFloat() ?: 0f,
+                evalDelta = result.losses.getOrNull(index)?.toFloat() ?: 0f,
                 tactic = result.tactics.getOrNull(index),
                 mateIn = missedMate?.mateInBefore,
                 matingPiece = missedMate?.moveObject?.pieceMoved?.toString(),

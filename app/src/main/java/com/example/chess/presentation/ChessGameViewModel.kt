@@ -23,6 +23,7 @@ import com.example.chess.data.model.PlayerType
 import com.example.chess.data.model.Position
 import com.example.chess.data.model.SANMovePair
 import com.example.chess.data.model.Spot
+import com.example.chess.data.remote.GeminiApiException
 import com.example.chess.data.repository.GamePlay
 import com.example.chess.data.repository.MoveExplainer
 import com.example.chess.domain.model.GameSummary
@@ -154,8 +155,11 @@ class ChessGameViewModel @Inject constructor(
 
     // Set once a Gemini call fails with a quota/rate-limit error (HTTP 429), so we stop
     // firing a doomed network request (and its CPU/IO cost) on every remaining move step
-    // for the rest of this session.
-    private var aiExplanationDisabled = false
+    // for the rest of this session. Exposed publicly so the UI can tell the user AI
+    // commentary has fallen back to deterministic insight text, instead of silently
+    // showing the same-looking feedback either way.
+    private val _aiExplanationDisabled = MutableStateFlow(false)
+    val aiExplanationDisabled: StateFlow<Boolean> = _aiExplanationDisabled.asStateFlow()
 
     fun totalMovesCount(): Int = _movesToSimulate.size
     private var aiJob: Job? = null
@@ -820,7 +824,7 @@ class ChessGameViewModel @Inject constructor(
         sanMove: String,
         index: Int,
     ) {
-        if (aiExplanationDisabled) return
+        if (_aiExplanationDisabled.value) return
         explanationJob?.cancel()
         explanationJob = viewModelScope.launch {
             _explanationLoading.value = true
@@ -829,12 +833,14 @@ class ChessGameViewModel @Inject constructor(
                     type = insight.category,
                     movePlayed = sanMove,
                     bestMove = insight.bestMove,
-                    chessPiece = null,
+                    chessPiece = _analysisResult.value?.captureOpportunity
+                        ?.getOrNull(index)?.target?.toString(),
                     evalDelta = insight.evalLost.toFloat(),
                     tactic = _analysisResult.value?.tactics?.getOrNull(index),
                     mateIn = _analysisResult.value?.missedMates
                         ?.getOrNull(index)?.mateInBefore,
-                    matingPiece = null,
+                    matingPiece = _analysisResult.value?.missedMates
+                        ?.getOrNull(index)?.moveObject?.pieceMoved?.toString(),
                     pgn = buildPGN(index),
                     playerElo = 1200,
                     moveNumber = index + 1,
@@ -853,8 +859,8 @@ class ChessGameViewModel @Inject constructor(
                 // Deterministic insight already shown — fall back to it silently from the
                 // user's perspective, but still log so a real failure is diagnosable.
                 Log.e(TAG, "launchAiExplanation: AI explanation failed, using deterministic insight", e)
-                if (e.message?.contains("429") == true) {
-                    aiExplanationDisabled = true
+                if (e is GeminiApiException && e.statusCode == 429) {
+                    _aiExplanationDisabled.value = true
                 }
             } finally {
                 _explanationLoading.value = false

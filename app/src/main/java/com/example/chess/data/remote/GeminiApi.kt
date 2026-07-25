@@ -9,6 +9,10 @@ import java.net.HttpURLConnection
 import java.net.URL
 import javax.inject.Inject
 
+// Carries the HTTP status code so callers can react to specific failures (e.g. 429
+// rate-limiting) without string-matching the exception message.
+class GeminiApiException(val statusCode: Int, message: String) : Exception(message)
+
 class GeminiApi @Inject constructor() {
     private val apiKey = BuildConfig.GEMINI_API_KEY
 
@@ -22,6 +26,12 @@ class GeminiApi @Inject constructor() {
                         })
                     })
                 })
+            })
+            // Server-side enforcement of the prompt's "max 2 sentences" instruction —
+            // without this, a verbose response can only be caught after the fact.
+            put("generationConfig", JSONObject().apply {
+                put("temperature", 0.6)
+                put("maxOutputTokens", 120)
             })
         }
 
@@ -43,7 +53,7 @@ class GeminiApi @Inject constructor() {
             connection.inputStream.bufferedReader().use { it.readText() }
         } else {
             val error = connection.errorStream?.bufferedReader()?.use { it.readText() }
-            throw Exception("API error $responseCode: $error")
+            throw GeminiApiException(responseCode, "API error $responseCode: $error")
         }
 
         val json = JSONObject(responseText)

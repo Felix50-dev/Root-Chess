@@ -15,25 +15,15 @@ class MoveExplainer @Inject constructor(
     private val explanationCache = ConcurrentHashMap<String, String>()
 
     suspend fun explain(request: MoveExplanationRequest): String {
-        val cacheKey = "${request.movePlayed}_${request.type}_${request.pgn.length}"
+        // Keyed on the full PGN (not just its length) so two different games that
+        // happen to reach the same move/category at the same PGN length don't collide.
+        val cacheKey = "${request.pgn}_${request.movePlayed}_${request.type}"
         explanationCache[cacheKey]?.let { return it }
 
         val prompt = buildPrompt(request)
         val explanation = geminiApi.complete(prompt)
         explanationCache[cacheKey] = explanation
         return explanation
-    }
-
-    // Fallback for when the Gemini API is unavailable
-    fun explainFallback(request: MoveExplanationRequest): String {
-        return when (request.type) {
-            "Best" -> "This is the optimal move in this position."
-            "Blunder" -> "This move loses material or position. Better was ${request.bestMove}."
-            "Mistake" -> "This move weakens your position. Better was ${request.bestMove}."
-            "Brilliant" -> "Excellent! You found ${request.tactic?.joinToString()}."
-            "MissedMate" -> "You missed mate in ${request.mateIn}."
-            else -> "Move analysis unavailable."
-        }
     }
 
     private fun buildPrompt(r: MoveExplanationRequest): String {

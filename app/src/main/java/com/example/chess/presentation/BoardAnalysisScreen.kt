@@ -127,6 +127,7 @@ fun BoardAnalysisScreen(
     val isTransitioning    by chessGameViewModel.isTransitioning.collectAsStateWithLifecycle()
     val visualPieces       by chessGameViewModel.visualPieces.collectAsStateWithLifecycle()
     val explanationLoading by chessGameViewModel.explanationLoading.collectAsStateWithLifecycle()
+    val aiExplanationDisabled by chessGameViewModel.aiExplanationDisabled.collectAsStateWithLifecycle()
     val analysisResult     by chessGameViewModel.analysisResult.collectAsStateWithLifecycle()
     val currentMoveIndex   by chessGameViewModel.currentMoveIndex.collectAsStateWithLifecycle()
     val currentInsight     by chessGameViewModel.currentInsight.collectAsStateWithLifecycle()
@@ -261,10 +262,11 @@ fun BoardAnalysisScreen(
             ) {
                 feedback?.let {
                     MoveFeedbackCard(
-                        feedback  = it,
-                        insight   = currentInsight,
-                        isLoading = explanationLoading,
-                        modifier  = Modifier
+                        feedback     = it,
+                        insight      = currentInsight,
+                        isLoading    = explanationLoading,
+                        aiUnavailable = aiExplanationDisabled,
+                        modifier     = Modifier
                             .fillMaxWidth()
                             .padding(horizontal = 12.dp, vertical = 4.dp),
                     )
@@ -820,6 +822,7 @@ fun MoveFeedbackCard(
     feedback: Feedback,
     insight: MoveInsight?,
     isLoading: Boolean,
+    aiUnavailable: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     val accent = categoryColor(feedback.type)
@@ -948,6 +951,14 @@ fun MoveFeedbackCard(
                     style      = MaterialTheme.typography.bodySmall,
                     lineHeight = 18.sp,
                 )
+                if (aiUnavailable) {
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text  = "Standard analysis — AI commentary unavailable",
+                        color = Color.White.copy(alpha = 0.35f),
+                        style = MaterialTheme.typography.labelSmall,
+                    )
+                }
             }
 
             insight?.bestContinuation
