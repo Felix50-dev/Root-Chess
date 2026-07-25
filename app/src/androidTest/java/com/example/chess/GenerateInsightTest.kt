@@ -43,6 +43,7 @@ class GenerateInsightTest {
             evalAfter = eval(350),   // strongly good for the opponent post-move
             tactics = listOf("Pin"),
             totalMoves = 20,
+            category = "Blunder",
         )
 
         assertNotEquals(InsightType.BRILLIANT_TACTIC, insight.insight)
@@ -58,6 +59,7 @@ class GenerateInsightTest {
             evalAfter = eval(0),   // no material lost
             tactics = listOf("Pin"),
             totalMoves = 20,
+            category = "Brilliant",
         )
 
         assertEquals(InsightType.BRILLIANT_TACTIC, insight.insight)

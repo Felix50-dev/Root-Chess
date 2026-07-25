@@ -53,6 +53,7 @@ fun HomeScreen(
     modifier: Modifier = Modifier,
     onPlayWithFriend: () -> Unit,
     onPlayWithComputer: () -> Unit,
+    onOpenPuzzles: () -> Unit,
     onBackPressed: () -> Unit
 ) {
     BackHandler { onBackPressed() }
@@ -101,6 +102,12 @@ fun HomeScreen(
                     text = "Play with Computer",
                     iconRes = R.drawable.rook_dark,
                     onClick = onPlayWithComputer,
+                    containerColor = Color(0xFFA26232)
+                )
+                AnimatedCardButton(
+                    text = "Puzzles",
+                    iconRes = R.drawable.bishop_white,
+                    onClick = onOpenPuzzles,
                     containerColor = Color(0xFFA26232)
                 )
             }
@@ -186,6 +193,7 @@ fun HomeScreenPreview() {
     HomeScreen(
         onPlayWithFriend = {},
         onPlayWithComputer = {},
+        onOpenPuzzles = {},
         onBackPressed = {}
     )
 }

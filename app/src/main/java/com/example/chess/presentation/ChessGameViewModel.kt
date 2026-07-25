@@ -7,6 +7,8 @@ import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.chess.R
+import com.example.chess.data.local.PuzzleDao
+import com.example.chess.data.local.PuzzleEntity
 import com.example.chess.data.model.AILevel
 import com.example.chess.data.model.AnalysisResult
 import com.example.chess.data.model.Board
@@ -48,6 +50,7 @@ private const val TAG = "ChessGameViewModel"
 class ChessGameViewModel @Inject constructor(
     private val game: GamePlay,
     private val moveExplainer: MoveExplainer,
+    private val puzzleDao: PuzzleDao,
     @ApplicationContext context: Context
 ) : ViewModel() {
 
@@ -382,6 +385,29 @@ class ChessGameViewModel @Inject constructor(
             _analysisResult.value = result
             _gameSummary.value = result.gameSummary
             _isAnalyzing.value = false
+            savePuzzlesFromBlunders(result.insights)
+        }
+    }
+
+    // Turns this game's Blunders/Mistakes into replayable puzzles for later practice.
+    // Runs after analysis so it never delays showing the review to the player.
+    private fun savePuzzlesFromBlunders(insights: List<MoveInsight>) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val candidates = game.extractPuzzleCandidates(_movesMade.value, insights)
+            if (candidates.isEmpty()) return@launch
+            val now = System.currentTimeMillis()
+            puzzleDao.insertAll(
+                candidates.map { candidate ->
+                    PuzzleEntity(
+                        fen = candidate.fen,
+                        correctMoveUci = candidate.correctMoveUci,
+                        playedMoveUci = candidate.playedMoveUci,
+                        category = candidate.category,
+                        sourceGameTimestamp = now,
+                        createdAt = now,
+                    )
+                }
+            )
         }
     }
 

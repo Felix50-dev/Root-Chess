@@ -1,7 +1,10 @@
 package com.example.chess.di
 
 import android.content.Context
+import androidx.room.Room
 import com.example.chess.data.StockfishEngine
+import com.example.chess.data.local.PuzzleDao
+import com.example.chess.data.local.PuzzleDatabase
 import com.example.chess.data.model.Board
 import com.example.chess.data.remote.GeminiApi
 import com.example.chess.data.repository.GamePlay
@@ -41,5 +44,15 @@ object AppModule {
     @Provides
     @Singleton
     fun provideGeminiApi(): GeminiApi = GeminiApi()
+
+    @Provides
+    @Singleton
+    fun providePuzzleDatabase(@ApplicationContext context: Context): PuzzleDatabase {
+        return Room.databaseBuilder(context, PuzzleDatabase::class.java, "puzzles.db").build()
+    }
+
+    @Provides
+    @Singleton
+    fun providePuzzleDao(database: PuzzleDatabase): PuzzleDao = database.puzzleDao()
 
 }

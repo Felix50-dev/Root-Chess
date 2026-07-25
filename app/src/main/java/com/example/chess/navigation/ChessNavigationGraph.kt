@@ -4,8 +4,10 @@ import androidx.activity.ComponentActivity
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.navigation.NavHostController
+import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
+import androidx.navigation.navArgument
 import com.example.chess.data.model.AILevel
 import com.example.chess.data.model.GameMode
 import com.example.chess.presentation.BoardAnalysisScreen
@@ -14,6 +16,8 @@ import com.example.chess.presentation.ChessGameScreen
 import com.example.chess.presentation.ChessGameViewModel
 import com.example.chess.presentation.ComputerModeScreen
 import com.example.chess.presentation.HomeScreen
+import com.example.chess.presentation.PuzzleListScreen
+import com.example.chess.presentation.PuzzleScreen
 import com.example.chess.presentation.SelectColorScreen
 import com.example.chess.presentation.SelectLevelScreen
 
@@ -26,6 +30,8 @@ object RootChessDestinations {
     const val OTHER_ROUTE = "other"
     const val ANALYSIS_ROUTE = "analysis"
     const val REVIEW_GAME_ROUTE = "review"
+    const val PUZZLE_LIST_ROUTE = "puzzles"
+    const val PUZZLE_SOLVE_ROUTE = "puzzle/{puzzleId}"
 }
 
 @Composable
@@ -51,6 +57,9 @@ fun RootChessNavHost(
                 onPlayWithComputer = {
                     viewModel.setGameMode(GameMode.COMPUTER)
                     navController.navigate(RootChessDestinations.OTHER_ROUTE)
+                },
+                onOpenPuzzles = {
+                    navController.navigate(RootChessDestinations.PUZZLE_LIST_ROUTE)
                 },
                 onBackPressed = {
                     activity.finish()
@@ -130,6 +139,26 @@ fun RootChessNavHost(
         ) {
             BoardAnalysisScreen(
                 chessGameViewModel = viewModel,
+            )
+        }
+        composable(
+            route = RootChessDestinations.PUZZLE_LIST_ROUTE
+        ) {
+            PuzzleListScreen(
+                onOpenPuzzle = { puzzleId ->
+                    navController.navigate("puzzle/$puzzleId")
+                },
+                onBack = { navController.popBackStack() },
+            )
+        }
+        composable(
+            route = RootChessDestinations.PUZZLE_SOLVE_ROUTE,
+            arguments = listOf(navArgument("puzzleId") { type = NavType.LongType })
+        ) { backStackEntry ->
+            val puzzleId = backStackEntry.arguments?.getLong("puzzleId") ?: return@composable
+            PuzzleScreen(
+                puzzleId = puzzleId,
+                onBack = { navController.popBackStack() },
             )
         }
     }

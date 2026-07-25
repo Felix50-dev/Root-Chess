@@ -67,6 +67,7 @@ fun SelectColorScreenPreview() {
     HomeScreen(
         onPlayWithFriend = {},
         onPlayWithComputer = {},
+        onOpenPuzzles = {},
         onBackPressed = {}
     )
 }

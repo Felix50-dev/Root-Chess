@@ -19,6 +19,7 @@ import com.example.chess.data.model.Pawn
 import com.example.chess.data.model.Player
 import com.example.chess.data.model.PlayerType
 import com.example.chess.data.model.Position
+import com.example.chess.data.model.PuzzleCandidate
 import com.example.chess.data.model.Queen
 import com.example.chess.data.model.Rook
 import com.example.chess.data.model.SANMovePair
@@ -107,7 +108,7 @@ class GamePlay @Inject constructor(
                 else -> 1
             }
             losses[i] * weight
-        } ?: 0
+        } ?: -1
     }
 
     fun handleHumanMove(
@@ -388,16 +389,22 @@ class GamePlay @Inject constructor(
                 evalAfter = positionEvals[i + 1],
                 tactics = raw.tactics,
                 totalMoves = movesPlayed.size,
+                category = raw.category,
             )
         }
 
-        // Mark the single most critical moment
-        val criticalIndex = insights.indices.maxByOrNull { insights[it].evalLost } ?: -1
+        // Mark the single most critical moment — weighted by category severity, not a
+        // raw eval-swing max, so a smaller-cp MissedMate/Blunder can outrank a merely
+        // larger-cp Inaccurate.
+        val criticalIndex = findCriticalMoment(
+            rawResults.map { it.loss },
+            rawResults.map { it.category },
+        )
         val markedInsights = insights.mapIndexed { i, insight ->
             insight.copy(isCriticalMoment = i == criticalIndex)
         }
 
-        val summary = generateGameSummary(markedInsights)
+        val summary = generateGameSummary(markedInsights, criticalIndex)
         val result = buildAnalysisResult(rawResults)
 
         return result.copy(
@@ -405,6 +412,37 @@ class GamePlay @Inject constructor(
             gameSummary = summary,
             criticalMoveIndex = criticalIndex,
         )
+    }
+
+    // Turns a just-analyzed game's Blunders/Mistakes into replayable puzzles: the
+    // position right before the mistake, plus the correct move the player missed.
+    // Deliberately a separate post-processing pass over analyzeMoveScores' own output,
+    // rather than folded into that loop, so it can't risk the already-working analysis.
+    fun extractPuzzleCandidates(
+        movesPlayed: List<String>,
+        insights: List<MoveInsight>,
+    ): List<PuzzleCandidate> {
+        val whitePlayer = Player(isWhite = true, playerType = PlayerType.HUMAN)
+        val blackPlayer = Player(isWhite = false, playerType = PlayerType.HUMAN)
+
+        return insights.mapIndexedNotNull { index, insight ->
+            if (insight.category != "Blunder" && insight.category != "Mistake") return@mapIndexedNotNull null
+
+            val replayBoard = Board()
+            for (ply in 0 until index) {
+                val player = if (ply % 2 == 0) whitePlayer else blackPlayer
+                val move = convertToMoveObject(movesPlayed[ply], replayBoard, player)
+                applyMove(move, replayBoard)
+            }
+
+            val activeColor = if (index % 2 == 0) Color.WHITE else Color.BLACK
+            PuzzleCandidate(
+                fen = FenConverter.toFen(replayBoard, activeColor),
+                correctMoveUci = insight.bestMove,
+                playedMoveUci = insight.move,
+                category = insight.category,
+            )
+        }
     }
 
     fun generateInsight(
@@ -415,10 +453,10 @@ class GamePlay @Inject constructor(
         evalAfter: PositionEval,
         tactics: List<String>,
         totalMoves: Int,
+        category: String,
     ): MoveInsight {
 
         val evalLost = calculateLoss(evalBefore.score, evalAfter.score, moveIndex % 2 == 0)
-        val category = categorizeByLoss(evalLost)
         val gamePhase = when {
             moveIndex < 12 -> GamePhase.OPENING
             moveIndex < totalMoves - 10 -> GamePhase.MIDDLEGAME
@@ -443,7 +481,7 @@ class GamePlay @Inject constructor(
                     buildTacticFoundMessage(tactics, playerMove)
 
             // Missed mate
-            evalBefore.mateIn in 1..5 && evalAfter.mateIn == 0 ->
+            isMissedMate(evalBefore.mateIn, evalAfter.mateIn, playerMove, bestMove) ->
                 InsightType.MISSED_MATE to
                         "You had checkmate in ${evalBefore.mateIn} but missed it. " +
                         "${bestMove.toReadable()} would have forced mate."
@@ -543,12 +581,12 @@ class GamePlay @Inject constructor(
                 "you missed an opportunity to gain ${evalLost / 100f}+ pawns of advantage."
     }
 
-    fun generateGameSummary(insights: List<MoveInsight>): GameSummary {
+    fun generateGameSummary(insights: List<MoveInsight>, criticalIndex: Int): GameSummary {
 
-        val criticalMove = insights.maxByOrNull { it.evalLost }
+        val criticalMove = insights.getOrNull(criticalIndex)
         val biggestSwing = criticalMove?.evalLost ?: 0
 
-        val narrative = buildGameNarrative(insights)
+        val narrative = buildGameNarrative(insights, criticalIndex)
         val weakness = detectWeakness(insights)
 
         return GameSummary(
@@ -558,7 +596,7 @@ class GamePlay @Inject constructor(
             blackAccuracy = calculateAccuracy(
                 insights.filterIndexed { i, _ -> i % 2 != 0 }.map { it.evalLost }, 100.0
             ),
-            criticalMoveIndex = insights.indexOf(criticalMove),
+            criticalMoveIndex = criticalIndex,
             criticalMoveDescription = criticalMove?.insightDetail ?: "",
             longestWinningStreak = findLongestStreak(insights),
             biggestMistakeMove = criticalMove?.move ?: "",
@@ -567,7 +605,7 @@ class GamePlay @Inject constructor(
         )
     }
 
-    private fun buildGameNarrative(insights: List<MoveInsight>): String {
+    private fun buildGameNarrative(insights: List<MoveInsight>, criticalIndex: Int): String {
         val blunders = insights.count { it.category == "Blunder" }
         val brilliants = insights.count { it.category == "Brilliant" }
         val opening = insights.take(10).count { it.evalLost < 30 }
@@ -586,11 +624,8 @@ class GamePlay @Inject constructor(
         }
 
         return "A $openingQuality $midgameStory. " +
-                if (blunders > 0) "The turning point was move ${
-                    insights.indexOf(
-                        insights.maxByOrNull { it.evalLost }
-                    ) + 1
-                }." else "No major blunders — a well-played game."
+                if (blunders > 0) "The turning point was move ${criticalIndex + 1}."
+                else "No major blunders — a well-played game."
     }
 
     private fun detectWeakness(insights: List<MoveInsight>): String {
@@ -701,11 +736,15 @@ class GamePlay @Inject constructor(
         movesPlayed: List<String>,
         onProgress: ((Int, Int) -> Unit)?
     ): List<PositionEval> {
+        // Analysis must always run at full engine strength, regardless of whatever
+        // Skill Level a prior live AI move (handleAIMove) left set on this shared
+        // Stockfish process.
+        stockfish.setDifficultyLevel(20)
         val total = movesPlayed.size + 1
         return (0..movesPlayed.size).map { i ->
             val moves = movesPlayed.subList(0, i).joinToString(" ")
             stockfish.sendCommand("position startpos moves $moves")
-            stockfish.sendCommand("go movetime 150")
+            stockfish.sendCommand("go movetime 500")
             val result = stockfish.getDetailedEval()   // ← was getMoveScore()
             onProgress?.invoke(i + 1, total)
             result
@@ -888,11 +927,12 @@ class GamePlay @Inject constructor(
 
     fun calculateAccuracy(losses: List<Number>, scalingFactor: Double): Double {
         if (losses.isEmpty()) return 0.0
-        return losses
-            .map { maxOf(0.0, it.toDouble()) }
-            .map { 1.0 / (1.0 + it / scalingFactor) }
-            .average() * 100
-            .coerceIn(0, 100)
+        return (
+            losses
+                .map { maxOf(0.0, it.toDouble()) }
+                .map { 1.0 / (1.0 + it / scalingFactor) }
+                .average() * 100
+        ).coerceIn(0.0, 100.0)
     }
 
     fun getFoolishMoveWithBias(player: Player, board: Board): Move? {
