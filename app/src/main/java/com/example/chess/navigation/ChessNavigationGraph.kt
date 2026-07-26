@@ -130,8 +130,8 @@ fun RootChessNavHost(
                 onStartReview = {
                     navController.navigate(RootChessDestinations.REVIEW_GAME_ROUTE)
                     viewModel.initReviewMode()
-                }
-
+                },
+                onBack = { navController.popBackStack() },
             )
         }
         composable (
@@ -139,6 +139,7 @@ fun RootChessNavHost(
         ) {
             BoardAnalysisScreen(
                 chessGameViewModel = viewModel,
+                onBack = { navController.popBackStack() },
             )
         }
         composable(

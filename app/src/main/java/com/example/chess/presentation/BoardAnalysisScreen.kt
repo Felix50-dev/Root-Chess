@@ -82,39 +82,14 @@ import com.example.chess.presentation.model.buildSquareUiStates
 
 // ── Design tokens ─────────────────────────────────────────────────────────────
 
-private val ColorBg          = Color(0xFF0D0D0D)
-private val ColorSurface     = Color(0xFF1A1A1A)
 private val ColorOak         = Color(0xFFA26232)
 private val ColorWhiteSquare = Color(0xFFF0D9B5)
 private val ColorBlunder     = Color(0xFFE24B4A)
 
-private fun categoryColor(type: String) = when (type) {
-    "Brilliant"                -> Color(0xFF1D9E75)
-    "Best"                     -> Color(0xFF378ADD)
-    "Great"                    -> Color(0xFF639922)
-    "Inaccuracy", "Inaccurate" -> Color(0xFFBA7517)
-    "Mistake"                  -> Color(0xFFD85A30)
-    "Blunder"                  -> Color(0xFFE24B4A)
-    "Miss"                     -> Color(0xFFD4537E)
-    "MissedMate"               -> Color(0xFF7F77DD)
-    else                       -> Color(0xFF888888)
-}
-
-private fun categoryIcon(type: String) = when (type) {
-    "Brilliant"                -> "✦"
-    "Best"                     -> "✓"
-    "Great"                    -> "↑"
-    "Inaccuracy", "Inaccurate" -> "?!"
-    "Mistake"                  -> "?"
-    "Blunder"                  -> "??"
-    "Miss"                     -> "!"
-    "MissedMate"               -> "M"
-    else                       -> "·"
-}
-
 @Composable
 fun BoardAnalysisScreen(
     chessGameViewModel: ChessGameViewModel,
+    onBack: () -> Unit,
 ) {
     val boardState         by chessGameViewModel.boardState.collectAsStateWithLifecycle()
     val lastMove           by chessGameViewModel.lastMove.collectAsStateWithLifecycle()
@@ -124,6 +99,7 @@ fun BoardAnalysisScreen(
     val aiLastMove         by chessGameViewModel.aiLastMove.collectAsStateWithLifecycle()
     val feedback           by chessGameViewModel.feedback.collectAsStateWithLifecycle()
     val isPlaying          by chessGameViewModel.isPlaying.collectAsStateWithLifecycle()
+    val playbackSpeed      by chessGameViewModel.playbackSpeed.collectAsStateWithLifecycle()
     val isTransitioning    by chessGameViewModel.isTransitioning.collectAsStateWithLifecycle()
     val visualPieces       by chessGameViewModel.visualPieces.collectAsStateWithLifecycle()
     val explanationLoading by chessGameViewModel.explanationLoading.collectAsStateWithLifecycle()
@@ -147,15 +123,14 @@ fun BoardAnalysisScreen(
     val isAtEnd    = totalMoves > 0 && currentMoveIndex >= totalMoves
 
     Scaffold(
-        topBar         = { TopAppBar(text = "Game review") },
-        containerColor = ColorBg,
+        topBar         = { TopAppBar(text = "Game review", onBack = onBack) },
     ) { padding ->
 
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
-                .background(ColorBg)
+                .background(MaterialTheme.colorScheme.background)
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(0.dp),
         ) {
@@ -170,6 +145,8 @@ fun BoardAnalysisScreen(
                 onPlayPause      = { chessGameViewModel.onPlayPause() },
                 onNext           = { chessGameViewModel.launchNextMove() },
                 currentCategory  = feedback?.type,
+                playbackSpeed    = playbackSpeed,
+                onCycleSpeed     = { chessGameViewModel.cyclePlaybackSpeed() },
                 modifier         = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 12.dp, vertical = 8.dp),
@@ -432,6 +409,8 @@ private fun ReviewControls(
     onPlayPause: () -> Unit,
     onNext: () -> Unit,
     currentCategory: String?,
+    playbackSpeed: Float,
+    onCycleSpeed: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val accent = currentCategory?.let { categoryColor(it) } ?: ColorOak
@@ -439,7 +418,7 @@ private fun ReviewControls(
     Surface(
         modifier       = modifier,
         shape          = RoundedCornerShape(14.dp),
-        color          = ColorSurface,
+        color          = MaterialTheme.colorScheme.surfaceVariant,
         tonalElevation = 0.dp,
     ) {
         Row(
@@ -449,12 +428,19 @@ private fun ReviewControls(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment     = Alignment.CenterVertically,
         ) {
-            Text(
-                text     = if (totalMoves > 0) "$currentMoveIndex / $totalMoves" else "— / —",
-                style    = MaterialTheme.typography.labelMedium,
-                color    = Color.White.copy(alpha = 0.4f),
-                modifier = Modifier.width(52.dp),
-            )
+            Column(modifier = Modifier.width(52.dp)) {
+                Text(
+                    text  = if (totalMoves > 0) "$currentMoveIndex / $totalMoves" else "— / —",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    text     = "${formatSpeed(playbackSpeed)}x",
+                    style    = MaterialTheme.typography.labelSmall,
+                    color    = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                    modifier = Modifier.clickable { onCycleSpeed() },
+                )
+            }
 
             Row(
                 horizontalArrangement = Arrangement.spacedBy(4.dp),
@@ -521,6 +507,9 @@ private fun ReviewControls(
     }
 }
 
+private fun formatSpeed(speed: Float): String =
+    if (speed == speed.toInt().toFloat()) speed.toInt().toString() else speed.toString()
+
 @Composable
 private fun ControlButton(
     onClick: () -> Unit,
@@ -534,14 +523,14 @@ private fun ControlButton(
             .clip(RoundedCornerShape(10.dp))
             .background(
                 if (enabled) accent.copy(alpha = 0.12f)
-                else Color.White.copy(alpha = 0.04f)
+                else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.04f)
             )
             .then(if (enabled) Modifier.clickable { onClick() } else Modifier),
         contentAlignment = Alignment.Center,
     ) {
         androidx.compose.runtime.CompositionLocalProvider(
             androidx.compose.material3.LocalContentColor provides
-                    if (enabled) accent else Color.White.copy(alpha = 0.2f)
+                    if (enabled) accent else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.2f)
         ) {
             content()
         }
@@ -577,7 +566,7 @@ fun EvalBar(
         else          -> "0.0"
     }
 
-    Box(modifier = modifier.background(ColorSurface)) {
+    Box(modifier = modifier.background(MaterialTheme.colorScheme.surfaceVariant)) {
         // Gray fill — clipped to the top (1 - fraction) portion, draw phase only.
         Box(
             modifier = Modifier
@@ -639,7 +628,7 @@ private fun EvalGraphCard(
     Card(
         modifier  = modifier,
         shape     = RoundedCornerShape(14.dp),
-        colors    = CardDefaults.cardColors(containerColor = ColorSurface),
+        colors    = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
         elevation = CardDefaults.cardElevation(0.dp),
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
@@ -651,7 +640,7 @@ private fun EvalGraphCard(
                 Text(
                     text  = "Evaluation",
                     style = MaterialTheme.typography.labelSmall,
-                    color = Color.White.copy(alpha = 0.4f),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 if (evaluations.isNotEmpty()) {
                     val lastEval = evaluations.getOrNull(currentIndex - 1) ?: 0
@@ -832,7 +821,7 @@ fun MoveFeedbackCard(
         modifier = modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(16.dp))
-            .background(ColorSurface)
+            .background(MaterialTheme.colorScheme.surfaceVariant)
             .drawBehind {
                 drawRect(
                     color   = accent,
@@ -874,7 +863,7 @@ fun MoveFeedbackCard(
                         )
                         Text(
                             text  = feedback.move,
-                            color = Color.White.copy(alpha = 0.35f),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                             style = MaterialTheme.typography.labelSmall,
                         )
                     }
@@ -910,16 +899,16 @@ fun MoveFeedbackCard(
                                 3    -> "3rd best"
                                 else -> "Not top 3"
                             },
-                            color = Color.White.copy(alpha = 0.35f),
-                            bg    = Color.White.copy(alpha = 0.06f),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            bg    = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f),
                         )
                     }
                     MetaChip(
                         text  = ins.gamePhase.name
                             .lowercase()
                             .replaceFirstChar { it.uppercase() },
-                        color = Color.White.copy(alpha = 0.25f),
-                        bg    = Color.White.copy(alpha = 0.04f),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        bg    = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.04f),
                     )
                     if (ins.isCriticalMoment) {
                         MetaChip(
@@ -947,7 +936,7 @@ fun MoveFeedbackCard(
             } else {
                 Text(
                     text       = feedback.explanation,
-                    color      = Color.White.copy(alpha = 0.78f),
+                    color      = MaterialTheme.colorScheme.onSurface,
                     style      = MaterialTheme.typography.bodySmall,
                     lineHeight = 18.sp,
                 )
@@ -955,7 +944,7 @@ fun MoveFeedbackCard(
                     Spacer(modifier = Modifier.height(6.dp))
                     Text(
                         text  = "Standard analysis — AI commentary unavailable",
-                        color = Color.White.copy(alpha = 0.35f),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                         style = MaterialTheme.typography.labelSmall,
                     )
                 }
@@ -966,7 +955,7 @@ fun MoveFeedbackCard(
                 ?.let { line ->
                     Spacer(modifier = Modifier.height(10.dp))
                     HorizontalDivider(
-                        color     = Color.White.copy(alpha = 0.05f),
+                        color     = MaterialTheme.colorScheme.outline.copy(alpha = 0.05f),
                         thickness = 0.5.dp,
                     )
                     Spacer(modifier = Modifier.height(8.dp))
@@ -986,14 +975,14 @@ fun GameSummaryCard(
     Card(
         modifier  = modifier,
         shape     = RoundedCornerShape(16.dp),
-        colors    = CardDefaults.cardColors(containerColor = ColorSurface),
+        colors    = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
         elevation = CardDefaults.cardElevation(0.dp),
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             Text(
                 text  = "Game summary",
                 style = MaterialTheme.typography.labelSmall,
-                color = Color.White.copy(alpha = 0.4f),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
 
             Spacer(modifier = Modifier.height(12.dp))
@@ -1001,11 +990,11 @@ fun GameSummaryCard(
             Text(
                 text  = summary.gameNarrative,
                 style = MaterialTheme.typography.bodyMedium,
-                color = Color.White.copy(alpha = 0.85f),
+                color = MaterialTheme.colorScheme.onSurface,
             )
 
             Spacer(modifier = Modifier.height(12.dp))
-            HorizontalDivider(color = Color.White.copy(alpha = 0.06f))
+            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.06f))
             Spacer(modifier = Modifier.height(12.dp))
 
             Row(
@@ -1028,7 +1017,7 @@ fun GameSummaryCard(
                     Spacer(modifier = Modifier.height(2.dp))
                     Text(
                         text  = summary.weaknessHint,
-                        color = Color.White.copy(alpha = 0.75f),
+                        color = MaterialTheme.colorScheme.onSurface,
                         style = MaterialTheme.typography.bodySmall,
                     )
                 }
@@ -1061,7 +1050,7 @@ private fun BestContinuation(moves: List<String>, accent: Color) {
     Column {
         Text(
             text  = "Best continuation",
-            color = Color.White.copy(alpha = 0.25f),
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
             style = MaterialTheme.typography.labelSmall,
         )
         Spacer(modifier = Modifier.height(6.dp))
@@ -1075,7 +1064,7 @@ private fun BestContinuation(moves: List<String>, accent: Color) {
                         .clip(RoundedCornerShape(6.dp))
                         .background(
                             if (index == 0) accent.copy(alpha = 0.18f)
-                            else Color.White.copy(alpha = 0.05f)
+                            else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.05f)
                         )
                         .padding(horizontal = 8.dp, vertical = 4.dp),
                     contentAlignment = Alignment.Center,
@@ -1083,7 +1072,7 @@ private fun BestContinuation(moves: List<String>, accent: Color) {
                     Text(
                         text       = move.toReadableNotation(),
                         color      = if (index == 0) accent
-                        else Color.White.copy(alpha = 0.4f),
+                        else MaterialTheme.colorScheme.onSurfaceVariant,
                         style      = MaterialTheme.typography.labelSmall,
                         fontWeight = if (index == 0) FontWeight.SemiBold
                         else FontWeight.Normal,
@@ -1092,7 +1081,7 @@ private fun BestContinuation(moves: List<String>, accent: Color) {
                 if (index < moves.lastIndex) {
                     Text(
                         text  = "→",
-                        color = Color.White.copy(alpha = 0.15f),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
                         style = MaterialTheme.typography.labelSmall,
                     )
                 }
@@ -1101,14 +1090,13 @@ private fun BestContinuation(moves: List<String>, accent: Color) {
     }
 }
 
-private val ShimmerColors = listOf(
-    Color.White.copy(alpha = 0.04f),
-    Color.White.copy(alpha = 0.10f),
-    Color.White.copy(alpha = 0.04f),
-)
-
 @Composable
 private fun ShimmerExplanation() {
+    val shimmerColors = listOf(
+        MaterialTheme.colorScheme.onSurface.copy(alpha = 0.04f),
+        MaterialTheme.colorScheme.onSurface.copy(alpha = 0.10f),
+        MaterialTheme.colorScheme.onSurface.copy(alpha = 0.04f),
+    )
     val transition = rememberInfiniteTransition(label = "shimmer")
     // Not destructured with `by` — reading .value happens inside drawBehind{} below
     // (draw phase only), so this infinite 1200ms animation — active for up to 4s on
@@ -1132,7 +1120,7 @@ private fun ShimmerExplanation() {
                 .drawBehind {
                     drawRect(
                         brush = Brush.linearGradient(
-                            colors = ShimmerColors,
+                            colors = shimmerColors,
                             start  = Offset(translateX.value, 0f),
                             end    = Offset(translateX.value + 200f, 0f),
                         )
@@ -1147,7 +1135,7 @@ private fun ShimmerExplanation() {
                 .drawBehind {
                     drawRect(
                         brush = Brush.linearGradient(
-                            colors = ShimmerColors,
+                            colors = shimmerColors,
                             start  = Offset(translateX.value, 0f),
                             end    = Offset(translateX.value + 200f, 0f),
                         )

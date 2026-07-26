@@ -62,16 +62,6 @@ import kotlinx.coroutines.launch
 
 // ── Color tokens ─────────────────────────────────────────────────────────────
 private val ChessOak        = Color(0xFFA26232)
-private val ChessOakLight   = Color(0xFFD4A96A)
-private val AccentBlue      = Color(0xFF378ADD)
-private val AccentPurple    = Color(0xFF7F77DD)
-private val CategoryBrilliant = Color(0xFF1D9E75)
-private val CategoryBest    = Color(0xFF378ADD)
-private val CategoryGood    = Color(0xFF639922)
-private val CategoryInaccuracy = Color(0xFFBA7517)
-private val CategoryMistake = Color(0xFFD85A30)
-private val CategoryBlunder = Color(0xFFE24B4A)
-private val CategoryMiss    = Color(0xFFD4537E)
 
 private data class MoveCategory(
     val label: String,
@@ -86,6 +76,7 @@ private data class MoveCategory(
 fun ChessAnalysisScreen(
     chessGameViewModel: ChessGameViewModel,
     onStartReview: () -> Unit,
+    onBack: () -> Unit,
 ) {
     val analysisResult by chessGameViewModel.analysisResult.collectAsStateWithLifecycle()
     val isAnalyzing    by chessGameViewModel.isAnalyzing.collectAsStateWithLifecycle()
@@ -98,18 +89,18 @@ fun ChessAnalysisScreen(
         val w = analysisResult?.whiteCategoryCounts ?: emptyMap()
         val b = analysisResult?.blackCategoryCounts ?: emptyMap()
         listOf(
-            MoveCategory("Brilliant",   CategoryBrilliant,  w["Brilliant"]   ?: 0, b["Brilliant"]   ?: 0),
-            MoveCategory("Best",        CategoryBest,       w["Best"]        ?: 0, b["Best"]        ?: 0),
-            MoveCategory("Great",       CategoryGood,       w["Great"]       ?: 0, b["Great"]       ?: 0),
-            MoveCategory("Inaccuracy",  CategoryInaccuracy, w["Inaccurate"]  ?: 0, b["Inaccurate"]  ?: 0),
-            MoveCategory("Mistake",     CategoryMistake,    w["Mistake"]     ?: 0, b["Mistake"]     ?: 0),
-            MoveCategory("Blunder",     CategoryBlunder,    w["Blunder"]     ?: 0, b["Blunder"]     ?: 0),
-            MoveCategory("Miss",        CategoryMiss,       w["Miss"]        ?: 0, b["Miss"]        ?: 0),
+            MoveCategory("Brilliant",   categoryColor("Brilliant"),   w["Brilliant"]   ?: 0, b["Brilliant"]   ?: 0),
+            MoveCategory("Best",        categoryColor("Best"),        w["Best"]        ?: 0, b["Best"]        ?: 0),
+            MoveCategory("Great",       categoryColor("Great"),       w["Great"]       ?: 0, b["Great"]       ?: 0),
+            MoveCategory("Inaccuracy",  categoryColor("Inaccuracy"),  w["Inaccurate"]  ?: 0, b["Inaccurate"]  ?: 0),
+            MoveCategory("Mistake",     categoryColor("Mistake"),     w["Mistake"]     ?: 0, b["Mistake"]     ?: 0),
+            MoveCategory("Blunder",     categoryColor("Blunder"),     w["Blunder"]     ?: 0, b["Blunder"]     ?: 0),
+            MoveCategory("Miss",        categoryColor("Miss"),        w["Miss"]        ?: 0, b["Miss"]        ?: 0),
         )
     }
 
     Scaffold(
-        topBar = { TopAppBar(text = "Game analysis") }
+        topBar = { TopAppBar(text = "Game analysis", onBack = onBack) }
     ) { padding ->
         Surface(
             modifier = Modifier
@@ -177,7 +168,7 @@ private fun PlayersCard() {
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment     = Alignment.CenterVertically,
         ) {
-            PlayerChip(initials = "WP", name = "White", elo = "1240", avatarColor = AccentBlue)
+            PlayerChip(name = "White", avatarColor = AccentBlue)
 
             Box(
                 modifier = Modifier
@@ -193,9 +184,7 @@ private fun PlayersCard() {
             }
 
             PlayerChip(
-                initials     = "BP",
                 name         = "Black",
-                elo          = "1180",
                 avatarColor  = AccentPurple,
                 reverseOrder = true,
             )
@@ -205,13 +194,13 @@ private fun PlayersCard() {
 
 @Composable
 private fun PlayerChip(
-    initials: String,
     name: String,
-    elo: String,
     avatarColor: Color,
     reverseOrder: Boolean = false,
 ) {
-    val items: @Composable () -> Unit = {
+    val avatarLetter = name.first().uppercase()
+
+    val avatar: @Composable () -> Unit = {
         Box(
             modifier        = Modifier
                 .size(40.dp)
@@ -220,57 +209,30 @@ private fun PlayerChip(
             contentAlignment = Alignment.Center,
         ) {
             Text(
-                text  = initials,
+                text  = avatarLetter,
                 style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
                 color = avatarColor,
             )
         }
-        Spacer(modifier = Modifier.width(8.dp))
-        Column(horizontalAlignment = if (reverseOrder) Alignment.End else Alignment.Start) {
-            Text(
-                text  = name,
-                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
-                color = MaterialTheme.colorScheme.onSurface,
-            )
-            Text(
-                text  = "$elo elo",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
+    }
+    val label: @Composable () -> Unit = {
+        Text(
+            text  = name,
+            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
+            color = MaterialTheme.colorScheme.onSurface,
+        )
     }
 
-    if (reverseOrder) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(horizontalAlignment = Alignment.End) {
-                Text(
-                    text  = name,
-                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
-                    color = MaterialTheme.colorScheme.onSurface,
-                )
-                Text(
-                    text  = "$elo elo",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        if (reverseOrder) {
+            label()
             Spacer(modifier = Modifier.width(8.dp))
-            Box(
-                modifier         = Modifier
-                    .size(40.dp)
-                    .clip(CircleShape)
-                    .background(avatarColor.copy(alpha = 0.15f)),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(
-                    text  = initials,
-                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
-                    color = avatarColor,
-                )
-            }
+            avatar()
+        } else {
+            avatar()
+            Spacer(modifier = Modifier.width(8.dp))
+            label()
         }
-    } else {
-        Row(verticalAlignment = Alignment.CenterVertically) { items() }
     }
 }
 

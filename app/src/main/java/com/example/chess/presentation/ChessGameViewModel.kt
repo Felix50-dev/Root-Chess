@@ -141,6 +141,15 @@ class ChessGameViewModel @Inject constructor(
     private val _isPlaying = MutableStateFlow(false)
     val isPlaying: StateFlow<Boolean> = _isPlaying
 
+    private val _playbackSpeed = MutableStateFlow(1f)
+    val playbackSpeed: StateFlow<Float> = _playbackSpeed
+
+    fun cyclePlaybackSpeed() {
+        val speeds = listOf(0.5f, 1f, 1.5f, 2f)
+        val idx = speeds.indexOf(_playbackSpeed.value).coerceAtLeast(0)
+        _playbackSpeed.value = speeds[(idx + 1) % speeds.size]
+    }
+
     // Guards nextMove()/previousMove() against overlapping invocations. _currentMoveIndex
     // advances partway through each of those functions, well before their closing
     // delay(MOVE_ANIMATION_TIME) — so a second tap on Next/Previous during that window used
@@ -931,7 +940,7 @@ class ChessGameViewModel @Inject constructor(
                 val displayTime = if (_currentMoveCategory.value in
                     listOf("Brilliant", "Mistake", "Blunder")
                 ) 5000L else 3000L
-                delay(displayTime)  // 450ms matches the animation duration
+                delay((displayTime / _playbackSpeed.value).toLong())
             }
             _isPlaying.value = false
         }
