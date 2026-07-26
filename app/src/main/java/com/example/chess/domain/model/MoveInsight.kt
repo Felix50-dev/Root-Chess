@@ -13,6 +13,7 @@ data class MoveInsight(
     val insightDetail: String,      // the human readable insight
     val isCriticalMoment: Boolean,  // biggest swing in the game
     val gamePhase: GamePhase,
+    val solutionGap: Int? = null,  // eval gap between best and 2nd-best line at this position
 )
 
 enum class InsightType {

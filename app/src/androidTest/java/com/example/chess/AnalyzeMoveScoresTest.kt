@@ -355,6 +355,7 @@ class AnalyzeMoveScoresTest {
         missedMate = null,
         tactics = emptyList(),
         isWhiteMove = isWhite,
+        nonPawnMaterial = 62,
     )
 }
 

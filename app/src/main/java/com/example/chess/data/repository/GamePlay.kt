@@ -41,6 +41,22 @@ import kotlin.math.abs
 
 private const val TAG = "GamePlay"
 
+// Ply index before which a move is always considered part of the opening, regardless
+// of material (nothing's been traded yet either way at this point in a normal game).
+private const val OPENING_PLY_CUTOFF = 12
+
+// Combined non-pawn, non-king material (both sides; 62 at game start) at or below which
+// a position counts as the endgame rather than the middlegame.
+private const val ENDGAME_MATERIAL_THRESHOLD = 13
+
+// Minimum eval-loss (cp) a missed profitable capture must cost before it's labeled
+// "Miss" instead of whatever plain category tier the loss alone would produce.
+private const val MIN_MISS_LOSS_CP = 50
+
+// Minimum eval gap (cp) between the best and 2nd-best line required for a Blunder/
+// Mistake to be considered "solution-unique" enough to export as a puzzle.
+private const val MIN_UNIQUE_SOLUTION_GAP_CP = 100
+
 class GamePlay @Inject constructor(
     var board: Board,
     val stockfish: StockfishEngine
@@ -74,6 +90,7 @@ class GamePlay @Inject constructor(
         val missedMate: MissedMate?,
         val tactics: List<String>,
         val isWhiteMove: Boolean,
+        val nonPawnMaterial: Int,
     )
 
     fun init(p1: Player, p2: Player, canClearMoves: Boolean) {
@@ -390,6 +407,7 @@ class GamePlay @Inject constructor(
                 tactics = raw.tactics,
                 totalMoves = movesPlayed.size,
                 category = raw.category,
+                nonPawnMaterial = raw.nonPawnMaterial,
             )
         }
 
@@ -427,6 +445,9 @@ class GamePlay @Inject constructor(
 
         return insights.mapIndexedNotNull { index, insight ->
             if (insight.category != "Blunder" && insight.category != "Mistake") return@mapIndexedNotNull null
+            // No second-best-line data (e.g. a forced-mate position) is treated as
+            // "allow" rather than reject, so missed-mate puzzles aren't filtered out.
+            if ((insight.solutionGap ?: MIN_UNIQUE_SOLUTION_GAP_CP) < MIN_UNIQUE_SOLUTION_GAP_CP) return@mapIndexedNotNull null
 
             val replayBoard = Board()
             for (ply in 0 until index) {
@@ -454,14 +475,16 @@ class GamePlay @Inject constructor(
         tactics: List<String>,
         totalMoves: Int,
         category: String,
+        nonPawnMaterial: Int,
     ): MoveInsight {
 
         val evalLost = calculateLoss(evalBefore.score, evalAfter.score, moveIndex % 2 == 0)
         val gamePhase = when {
-            moveIndex < 12 -> GamePhase.OPENING
-            moveIndex < totalMoves - 10 -> GamePhase.MIDDLEGAME
-            else -> GamePhase.ENDGAME
+            moveIndex < OPENING_PLY_CUTOFF -> GamePhase.OPENING
+            nonPawnMaterial <= ENDGAME_MATERIAL_THRESHOLD -> GamePhase.ENDGAME
+            else -> GamePhase.MIDDLEGAME
         }
+        val solutionGap = evalBefore.secondBestScore?.let { second -> evalBefore.score - second }
 
         // Was the player's move the best, 2nd best, 3rd best?
         val playerMoveRank = when {
@@ -539,6 +562,7 @@ class GamePlay @Inject constructor(
             insightDetail = insightDetail,
             isCriticalMoment = false,  // set after all moves analyzed
             gamePhase = gamePhase,
+            solutionGap = solutionGap,
         )
     }
 
@@ -740,6 +764,9 @@ class GamePlay @Inject constructor(
         // Skill Level a prior live AI move (handleAIMove) left set on this shared
         // Stockfish process.
         stockfish.setDifficultyLevel(20)
+        // Second line lets us gauge how far ahead the best move is of the runner-up —
+        // used to gate puzzle solution-uniqueness (extractPuzzleCandidates).
+        stockfish.sendCommand("setoption name MultiPV value 2")
         val total = movesPlayed.size + 1
         return (0..movesPlayed.size).map { i ->
             val moves = movesPlayed.subList(0, i).joinToString(" ")
@@ -775,6 +802,9 @@ class GamePlay @Inject constructor(
         val playerMoveObject = convertToMoveObject(partialMove, firstBoard, currentPlayer)
 
         var category = categorizeByLoss(loss)
+        // Snapshot before this ply's move is applied below, so it matches the position
+        // `evalBefore` was computed for.
+        val nonPawnMaterial = combinedNonPawnMaterial(firstBoard)
 
         val targetPosition = recommendedMoveObject.to.position
         val capturedPiece = firstBoard.getBox(targetPosition.row, targetPosition.column).chessPiece
@@ -785,7 +815,9 @@ class GamePlay @Inject constructor(
             currentPlayer,
         )
 
-        if (isMissedCapture(
+        // Small losses aren't worth flagging as a "Miss" just because the exact
+        // recommended capture wasn't played — only demote once it actually cost something.
+        if (loss >= MIN_MISS_LOSS_CP && isMissedCapture(
                 capturedPiece,
                 playerColor,
                 captureOpportunity?.isProfitable == true,
@@ -836,8 +868,18 @@ class GamePlay @Inject constructor(
             missedMate = missedMate,
             tactics = tactics,
             isWhiteMove = isWhiteMove,
+            nonPawnMaterial = nonPawnMaterial,
         )
     }
+
+    // Combined non-pawn, non-king material remaining for both sides — used to detect
+    // the endgame by actual simplification instead of proximity to the game's last move.
+    private fun combinedNonPawnMaterial(board: Board): Int =
+        players.sumOf { player ->
+            getAlivePieces(player, board)
+                .filterNot { it is King || it is Pawn }
+                .sumOf { it.value }
+        }
 
     fun buildAnalysisResult(results: List<SingleMoveResult>): AnalysisResult {
         val categoryCounts = mutableMapOf(

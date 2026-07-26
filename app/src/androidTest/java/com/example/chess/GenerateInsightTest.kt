@@ -44,6 +44,7 @@ class GenerateInsightTest {
             tactics = listOf("Pin"),
             totalMoves = 20,
             category = "Blunder",
+            nonPawnMaterial = 62,
         )
 
         assertNotEquals(InsightType.BRILLIANT_TACTIC, insight.insight)
@@ -60,6 +61,7 @@ class GenerateInsightTest {
             tactics = listOf("Pin"),
             totalMoves = 20,
             category = "Brilliant",
+            nonPawnMaterial = 62,
         )
 
         assertEquals(InsightType.BRILLIANT_TACTIC, insight.insight)

@@ -85,7 +85,10 @@ class StockfishEngine {
             }
         }
 
-        return PositionEval(state.score, state.bestMove, state.mateIn, state.pv, state.depth)
+        return PositionEval(
+            state.score, state.bestMove, state.mateIn, state.pv, state.depth,
+            state.secondBestScore, state.secondBestMove,
+        )
     }
 
     // Runs `readLoop` (a blocking readLine() loop) on `ioScope` and waits up to
@@ -121,29 +124,47 @@ class StockfishEngine {
         }
     }
 
+    private fun parsePvTokens(pv: String): List<String> = pv
+        .trim()
+        .split(" ")
+        .filter { token ->
+            token.length in 4..5
+                    && token[0] in 'a'..'h'
+                    && token[1] in '1'..'8'
+                    && token[2] in 'a'..'h'
+                    && token[3] in '1'..'8'
+        }
+        .take(4)
+
     fun parseLine(line: String, state: EvalParseState) {
         if (line.startsWith("info depth")) {
-            Regex("depth (\\d+)").find(line)?.let {
-                state.depth = it.groupValues[1].toInt()
-            }
-            Regex("score cp (-?\\d+)").find(line)?.let {
-                state.score = it.groupValues[1].toInt()
-            }
-            Regex("score mate (-?\\d+)").find(line)?.let {
-                state.mateIn = it.groupValues[1].toInt()
-            }
-            Regex("pv (.+)$").find(line)?.let {
-                state.pv = it.groupValues[1]
-                    .trim()
-                    .split(" ")
-                    .filter { token ->
-                        token.length in 4..5
-                                && token[0] in 'a'..'h'
-                                && token[1] in '1'..'8'
-                                && token[2] in 'a'..'h'
-                                && token[3] in '1'..'8'
+            // Absent "multipv N" means the engine wasn't asked for extra lines — treat
+            // that as line 1 so single-PV callers/tests keep working unchanged.
+            val multipv = Regex("multipv (\\d+)").find(line)?.groupValues?.get(1)?.toIntOrNull() ?: 1
+            when (multipv) {
+                1 -> {
+                    Regex("depth (\\d+)").find(line)?.let {
+                        state.depth = it.groupValues[1].toInt()
                     }
-                    .take(4)
+                    Regex("score cp (-?\\d+)").find(line)?.let {
+                        state.score = it.groupValues[1].toInt()
+                    }
+                    Regex("score mate (-?\\d+)").find(line)?.let {
+                        state.mateIn = it.groupValues[1].toInt()
+                    }
+                    Regex("pv (.+)$").find(line)?.let {
+                        state.pv = parsePvTokens(it.groupValues[1])
+                    }
+                }
+                2 -> {
+                    Regex("score cp (-?\\d+)").find(line)?.let {
+                        state.secondBestScore = it.groupValues[1].toInt()
+                    }
+                    Regex("pv (.+)$").find(line)?.let {
+                        state.secondBestMove = parsePvTokens(it.groupValues[1]).firstOrNull()
+                    }
+                }
+                // multipv >= 3 ignored — only the top 2 lines are requested/used.
             }
         }
         if (line.startsWith("bestmove")) {
@@ -159,7 +180,10 @@ class StockfishEngine {
             parseLine(line, state)
             if (state.done) break
         }
-        return PositionEval(state.score, state.bestMove, state.mateIn, state.pv, state.depth)
+        return PositionEval(
+            state.score, state.bestMove, state.mateIn, state.pv, state.depth,
+            state.secondBestScore, state.secondBestMove,
+        )
     }
 
     fun sendCommand(command: String) {

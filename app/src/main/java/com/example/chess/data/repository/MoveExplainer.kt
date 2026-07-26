@@ -15,6 +15,7 @@ class MoveExplainer @Inject constructor(
     private val explanationCache = ConcurrentHashMap<String, String>()
 
     suspend fun explain(request: MoveExplanationRequest): String {
+
         // Keyed on the full PGN (not just its length) so two different games that
         // happen to reach the same move/category at the same PGN length don't collide.
         val cacheKey = "${request.pgn}_${request.movePlayed}_${request.type}"
