@@ -80,6 +80,7 @@ fun ChessAnalysisScreen(
 ) {
     val analysisResult by chessGameViewModel.analysisResult.collectAsStateWithLifecycle()
     val isAnalyzing    by chessGameViewModel.isAnalyzing.collectAsStateWithLifecycle()
+    val analysisError  by chessGameViewModel.analysisError.collectAsStateWithLifecycle()
     val analysisProgress by chessGameViewModel.analysisProgress.collectAsStateWithLifecycle()
 
     val isReady = analysisResult != null && !isAnalyzing
@@ -139,6 +140,7 @@ fun ChessAnalysisScreen(
                 AnalysisButton(
                     isAnalyzing  = isAnalyzing,
                     isReady      = isReady,
+                    isError      = analysisError,
                     onClick      = onStartReview,
                     realProgress = analysisProgress,
                 )
@@ -541,6 +543,7 @@ private fun CountChip(count: Int, color: Color) {
 private fun AnalysisButton(
     isAnalyzing: Boolean,
     isReady: Boolean,
+    isError: Boolean = false,
     realProgress: Float = 0f,
     onClick: () -> Unit,
 ) {
@@ -598,6 +601,12 @@ private fun AnalysisButton(
                 Spacer(modifier = Modifier.width(10.dp))
                 Text(
                     text  = "Analyzing game…",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = Color.White,
+                )
+            } else if (isError) {
+                Text(
+                    text  = "Analysis unavailable",
                     style = MaterialTheme.typography.labelLarge,
                     color = Color.White,
                 )

@@ -277,9 +277,19 @@ class GamePlay @Inject constructor(
         )
     }
 
+    // Mirrors the same a-h/1-8 well-formedness check StockfishEngine.parsePvTokens uses for
+    // PV tokens — kept independent (not shared across modules) so GamePlay doesn't take a
+    // dependency on StockfishEngine internals just for this.
+    private fun isValidAlgebraicMove(moveStr: String): Boolean =
+        moveStr.length >= 4 &&
+            moveStr[0] in 'a'..'h' &&
+            moveStr[1] in '1'..'8' &&
+            moveStr[2] in 'a'..'h' &&
+            moveStr[3] in '1'..'8'
+
     fun convertToMoveObject(moveStr: String, board: Board, player: Player): Move {
-        if (moveStr.length < 4) {
-            Log.d(TAG, "convertToMoveObject: Invalid move string: '$moveStr'")
+        require(isValidAlgebraicMove(moveStr)) {
+            "convertToMoveObject: not a well-formed move string: '$moveStr'"
         }
         Log.d(TAG, "convertToMoveObject: board state is ${board.boxes}")
 
@@ -763,6 +773,9 @@ class GamePlay @Inject constructor(
         // Analysis must always run at full engine strength, regardless of whatever
         // Skill Level a prior live AI move (handleAIMove) left set on this shared
         // Stockfish process.
+        check(stockfish.isRunning) {
+            "Stockfish engine is not running — analysis unavailable (failed to start or was stopped)"
+        }
         stockfish.setDifficultyLevel(20)
         // Second line lets us gauge how far ahead the best move is of the runner-up —
         // used to gate puzzle solution-uniqueness (extractPuzzleCandidates).
@@ -797,8 +810,12 @@ class GamePlay @Inject constructor(
         val loss = calculateLoss(evalBefore.score, evalAfter.score, isWhiteMove)
         val evalAfterFromWhite = if (isWhiteMove) -evalAfter.score else evalAfter.score
 
-        val recommendedMoveObject =
+        val recommendedMoveObject = if (isValidAlgebraicMove(evalBefore.bestMove)) {
             convertToMoveObject(evalBefore.bestMove, firstBoard, currentPlayer)
+        } else {
+            Log.w(TAG, "analyzeSingleMove: no usable engine recommendation for ply $index (bestMove='${evalBefore.bestMove}')")
+            null
+        }
         val playerMoveObject = convertToMoveObject(partialMove, firstBoard, currentPlayer)
 
         var category = categorizeByLoss(loss)
@@ -806,14 +823,14 @@ class GamePlay @Inject constructor(
         // `evalBefore` was computed for.
         val nonPawnMaterial = combinedNonPawnMaterial(firstBoard)
 
-        val targetPosition = recommendedMoveObject.to.position
-        val capturedPiece = firstBoard.getBox(targetPosition.row, targetPosition.column).chessPiece
-        val captureOpportunity = getCaptureOpportunity(
-            firstBoard,
-            recommendedMoveObject.from.position,
-            targetPosition,
-            currentPlayer,
-        )
+        // No recommended move to compare against — capture/miss detection for this ply is
+        // simply unavailable, not an error; everything else below still runs normally.
+        val capturedPiece = recommendedMoveObject?.let {
+            firstBoard.getBox(it.to.position.row, it.to.position.column).chessPiece
+        }
+        val captureOpportunity = recommendedMoveObject?.let {
+            getCaptureOpportunity(firstBoard, it.from.position, it.to.position, currentPlayer)
+        }
 
         // Small losses aren't worth flagging as a "Miss" just because the exact
         // recommended capture wasn't played — only demote once it actually cost something.
@@ -834,12 +851,16 @@ class GamePlay @Inject constructor(
             )
         ) {
             category = "MissedMate"
-            MissedMate(
-                move = partialMove,
-                mateInBefore = evalBefore.mateIn,
-                player = currentPlayer,
-                moveObject = recommendedMoveObject,
-            )
+            // moveObject is non-null in the MissedMate model — if there's no valid engine
+            // recommendation for this ply, still flag the category but skip the detail object.
+            recommendedMoveObject?.let {
+                MissedMate(
+                    move = partialMove,
+                    mateInBefore = evalBefore.mateIn,
+                    player = currentPlayer,
+                    moveObject = it,
+                )
+            }
         } else null
 
         val tactics = listOfNotNull(

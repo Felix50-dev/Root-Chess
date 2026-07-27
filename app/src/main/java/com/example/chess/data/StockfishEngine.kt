@@ -25,6 +25,12 @@ class StockfishEngine {
     private var process: Process? = null
     private var outputStream: BufferedWriter? = null
 
+    // True once startStockfish() has successfully spawned the engine process. False if the
+    // process was never started, failed to start (e.g. missing native binary for this
+    // device's ABI — startStockfish() swallows that as an IOException), or was stopped.
+    val isRunning: Boolean
+        get() = process != null
+
     // A single reader for the lifetime of the process, created once in startStockfish()
     // and reused by every getBestMove()/getDetailedEval() call. A fresh BufferedReader
     // per call would silently lose whatever it had already buffered-but-not-yet-returned

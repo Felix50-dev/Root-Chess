@@ -76,7 +76,7 @@ class GamePlayTest {
         assertTrue("_promotionPieceFlow should emit Queen", game._promotionPieceFlow.value is Queen)
     }
 
-    @Test(expected = StringIndexOutOfBoundsException::class)
+    @Test(expected = IllegalArgumentException::class)
     fun testConvertToMoveObjectWithInvalidStringThrowsException() {
         val moveStr = ""
         val stockfish = StockfishEngine()

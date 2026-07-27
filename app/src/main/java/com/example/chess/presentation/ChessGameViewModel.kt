@@ -137,6 +137,13 @@ class ChessGameViewModel @Inject constructor(
     private val _isAnalyzing = MutableStateFlow(false)
     val isAnalyzing: StateFlow<Boolean> = _isAnalyzing.asStateFlow()
 
+    // Set when analyzeGame()'s call into GamePlay.analyzeMoveScores throws — e.g. the
+    // Stockfish engine failed to start (missing native binary for this device's ABI) or
+    // produced unusable output. Lets the UI distinguish "still waiting" from "never going
+    // to finish" instead of spinning forever.
+    private val _analysisError = MutableStateFlow(false)
+    val analysisError: StateFlow<Boolean> = _analysisError.asStateFlow()
+
     private var autoReviewJob: Job? = null
     private val _isPlaying = MutableStateFlow(false)
     val isPlaying: StateFlow<Boolean> = _isPlaying
@@ -388,17 +395,24 @@ class ChessGameViewModel @Inject constructor(
     fun analyzeGame() {
         viewModelScope.launch {
             _isAnalyzing.value = true
-            val result = game.analyzeMoveScores(
-                movesPlayed = _movesMade.value,
-                onProgress = { current, total ->
-                    // drive the button fill animation with real progress
-                    _analysisProgress.value = current.toFloat() / total.toFloat()
-                }
-            )
-            _analysisResult.value = result
-            _gameSummary.value = result.gameSummary
-            _isAnalyzing.value = false
-            savePuzzlesFromBlunders(result.insights)
+            _analysisError.value = false
+            try {
+                val result = game.analyzeMoveScores(
+                    movesPlayed = _movesMade.value,
+                    onProgress = { current, total ->
+                        // drive the button fill animation with real progress
+                        _analysisProgress.value = current.toFloat() / total.toFloat()
+                    }
+                )
+                _analysisResult.value = result
+                _gameSummary.value = result.gameSummary
+                savePuzzlesFromBlunders(result.insights)
+            } catch (e: Exception) {
+                Log.e(TAG, "analyzeGame: analysis failed", e)
+                _analysisError.value = true
+            } finally {
+                _isAnalyzing.value = false
+            }
         }
     }
 
