@@ -512,6 +512,13 @@ class GamePlay @Inject constructor(
 
         val (insightType, insightDetail) = when {
 
+            // Missed mate — checked before "Brilliant" below: missing the objectively best
+            // continuation (mate) shouldn't be overshadowed by a tactic found along the way.
+            isMissedMate(evalBefore.mateIn, evalAfter.mateIn, playerMove, bestMove) ->
+                InsightType.MISSED_MATE to
+                        "You had checkmate in ${evalBefore.mateIn} but missed it. " +
+                        "${bestMove.toReadable()} would have forced mate."
+
             // Brilliant tactic found — but only praise it if the engine agrees the move
             // was actually good. A matched tactic pattern only proves the tactic-executing
             // piece is safe on its own landing square, not that exploiting the tactic
@@ -519,12 +526,6 @@ class GamePlay @Inject constructor(
             tactics.isNotEmpty() && evalLost <= 50 &&
                     -evalAfter.score >= MIN_BRILLIANT_MATERIAL_ADVANTAGE_CP -> InsightType.BRILLIANT_TACTIC to
                     buildTacticFoundMessage(tactics, playerMove)
-
-            // Missed mate
-            isMissedMate(evalBefore.mateIn, evalAfter.mateIn, playerMove, bestMove) ->
-                InsightType.MISSED_MATE to
-                        "You had checkmate in ${evalBefore.mateIn} but missed it. " +
-                        "${bestMove.toReadable()} would have forced mate."
 
             // Material blunder — dropped a piece
             evalLost > 250 && gamePhase != GamePhase.ENDGAME ->
@@ -883,8 +884,11 @@ class GamePlay @Inject constructor(
         // exploiting it (e.g. capturing a "pinned" piece that's defended elsewhere) is
         // sound. The engine's own loss measurement already captures that; don't let a
         // matched tactic pattern override a move Stockfish says was actually bad.
+        // Also never overrides "Miss"/"MissedMate" — those mean the player didn't actually
+        // find the objectively best continuation, which contradicts calling the move Brilliant.
         val materialAdvantageForMover = -evalAfter.score
-        if (tactics.isNotEmpty() && loss <= 50 &&
+        if (category != "Miss" && category != "MissedMate" &&
+            tactics.isNotEmpty() && loss <= 50 &&
             materialAdvantageForMover >= MIN_BRILLIANT_MATERIAL_ADVANTAGE_CP
         ) category = "Brilliant"
 
