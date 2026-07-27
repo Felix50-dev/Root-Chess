@@ -85,7 +85,42 @@ android {
 
     sourceSets {
         getByName("main").jniLibs.srcDir("libs")  // Directory for native .so files
+        // AGP only auto-packages add_library(SHARED) outputs, not the add_executable(chess)
+        // Stockfish binary CMakeLists.txt builds — see packageChessNativeExecutables below.
+        getByName("main").jniLibs.srcDir(layout.buildDirectory.dir("generated/jniLibs"))
     }
+}
+
+val chessAbis = listOf("armeabi-v7a", "arm64-v8a", "x86", "x86_64")
+
+// Copies the CMake-built 'chess' (Stockfish) executable for each ABI into a generated
+// jniLibs dir as lib_chess.so. AGP only auto-packages add_library(SHARED) outputs, not
+// add_executable outputs, so this step is required for every ABI — previously done
+// manually and committed to git for only 2 of the 4 ABIs (and had already gone stale).
+val packageChessNativeExecutables = tasks.register("packageChessNativeExecutables") {
+    chessAbis.forEach { abi -> dependsOn("buildCMakeDebug[$abi][chess]") }
+
+    val outputDir = layout.buildDirectory.dir("generated/jniLibs")
+    outputs.dir(outputDir)
+
+    doLast {
+        chessAbis.forEach { abi ->
+            val built = fileTree(layout.buildDirectory.dir("intermediates/cxx")) {
+                include("**/obj/$abi/chess")
+            }.singleFile
+            val dest = outputDir.get().dir(abi).asFile.also { it.mkdirs() }
+            built.copyTo(File(dest, "lib_chess.so"), overwrite = true)
+        }
+    }
+}
+
+// Hooked into mergeDebugJniLibFolders (the task that actually reads the jniLibs source
+// set directories), not preBuild — the CMake tasks themselves depend on preBuild via
+// preDebugBuild, so depending on this task from preBuild would create a circular
+// dependency. AGP registers its variant tasks lazily, so match-and-configure rather
+// than tasks.named(...), which would fail if evaluated before the task exists.
+tasks.matching { it.name == "mergeDebugJniLibFolders" }.configureEach {
+    dependsOn(packageChessNativeExecutables)
 }
 
 dependencies {
