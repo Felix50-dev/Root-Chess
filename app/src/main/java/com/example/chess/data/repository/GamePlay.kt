@@ -57,6 +57,12 @@ private const val MIN_MISS_LOSS_CP = 50
 // Mistake to be considered "solution-unique" enough to export as a puzzle.
 private const val MIN_UNIQUE_SOLUTION_GAP_CP = 100
 
+// Minimum resulting advantage (cp, from the mover's own perspective) for a
+// matched tactic to count as "Brilliant" rather than just a good tactical
+// move — roughly a minor piece's worth, so the tactic has to have actually
+// paid off, not just technically qualify.
+private const val MIN_BRILLIANT_MATERIAL_ADVANTAGE_CP = 300
+
 class GamePlay @Inject constructor(
     var board: Board,
     val stockfish: StockfishEngine
@@ -510,7 +516,8 @@ class GamePlay @Inject constructor(
             // was actually good. A matched tactic pattern only proves the tactic-executing
             // piece is safe on its own landing square, not that exploiting the tactic
             // (e.g. capturing a "pinned" piece that's defended elsewhere) is sound.
-            tactics.isNotEmpty() && evalLost <= 50 -> InsightType.BRILLIANT_TACTIC to
+            tactics.isNotEmpty() && evalLost <= 50 &&
+                    -evalAfter.score >= MIN_BRILLIANT_MATERIAL_ADVANTAGE_CP -> InsightType.BRILLIANT_TACTIC to
                     buildTacticFoundMessage(tactics, playerMove)
 
             // Missed mate
@@ -876,7 +883,10 @@ class GamePlay @Inject constructor(
         // exploiting it (e.g. capturing a "pinned" piece that's defended elsewhere) is
         // sound. The engine's own loss measurement already captures that; don't let a
         // matched tactic pattern override a move Stockfish says was actually bad.
-        if (tactics.isNotEmpty() && loss <= 50) category = "Brilliant"
+        val materialAdvantageForMover = -evalAfter.score
+        if (tactics.isNotEmpty() && loss <= 50 &&
+            materialAdvantageForMover >= MIN_BRILLIANT_MATERIAL_ADVANTAGE_CP
+        ) category = "Brilliant"
 
         applyMove(playerMoveObject, firstBoard)
 

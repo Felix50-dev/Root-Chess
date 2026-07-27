@@ -57,7 +57,7 @@ class GenerateInsightTest {
             playerMove = "c1c4",
             bestMove = "c1c4",
             evalBefore = eval(0),
-            evalAfter = eval(0),   // no material lost
+            evalAfter = eval(-350),   // White ends up with a big material-scale edge
             tactics = listOf("Pin"),
             totalMoves = 20,
             category = "Brilliant",
