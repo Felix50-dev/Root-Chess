@@ -470,15 +470,17 @@ class King(
     }
 
     private fun isUnderAttack(board: Board, position: Position, attackerColor: Color): Boolean {
+        val targetSpot = board.getBox(position.row, position.column)
         // Iterate through all spots on the board
         for (row in 0 until Board.NUM_ROWS) {
+            val r = board.boxes[row]
             for (col in 0 until Board.NUM_COLUMNS) {
-                val spot = board.getBox(row, col)
+                val spot = r[col]
                 val piece = spot.chessPiece
                 // Check if there is a piece on the spot and it belongs to the opponent
                 if (piece != null && piece.color != attackerColor) {
                     // Check if the opponent's piece can move to the target position
-                    if (piece.canMove(board, spot, board.getBox(position.row, position.column))) {
+                    if (piece.canMove(board, spot, targetSpot)) {
                         return true // The position is under attack
                     }
                 }
@@ -488,15 +490,17 @@ class King(
     }
 
     private fun isCheck(board: Board, attackerColor: Color): Boolean {
+        val targetSpot = board.getBox(position.row, position.column)
         // Iterate through all spots on the board
         for (row in 0 until Board.NUM_ROWS) {
+            val r = board.boxes[row]
             for (col in 0 until Board.NUM_COLUMNS) {
-                val spot = board.getBox(row, col)
+                val spot = r[col]
                 val piece = spot.chessPiece
                 // Check if there is a piece on the spot and it belongs to the opponent
                 if (piece != null && piece.color == attackerColor) {
                     // Check if the opponent's piece can move to the king's position
-                    if (piece.canMove(board, spot, board.getBox(position.row, position.column))) {
+                    if (piece.canMove(board, spot, targetSpot)) {
                         return true // The king is in check
                     }
                 }
