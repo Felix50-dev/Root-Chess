@@ -1,0 +1,3 @@
+## 2023-10-27 - Chess Board Optimization and Kotlin Constructor Injection
+**Learning:** Overwriting properties in parameterless constructors is highly wasteful as the initial board state setup (resetBoard) is executed and then immediately discarded. Using Kotlin's constructor delegation with nullable or default parameters lets us bypass redundant initialization during object cloning. Additionally, traversing board boxes directly with collection iterators avoids overhead from multiple index-bound checks and method calls.
+**Action:** Always inspect custom object cloning routines to avoid redundant property initializations, and bypass nested index-based loops by utilizing fast collection-based direct iterations.

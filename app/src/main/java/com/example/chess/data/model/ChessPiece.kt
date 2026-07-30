@@ -470,15 +470,16 @@ class King(
     }
 
     private fun isUnderAttack(board: Board, position: Position, attackerColor: Color): Boolean {
-        // Iterate through all spots on the board
-        for (row in 0 until Board.NUM_ROWS) {
-            for (col in 0 until Board.NUM_COLUMNS) {
-                val spot = board.getBox(row, col)
+        // Cache the target spot before the loop to avoid redundant boundary/lookup calls on every iteration
+        val targetSpot = board.getBox(position.row, position.column)
+        // Iterate directly through board's boxes using fast nested iterators to avoid getBox overhead
+        for (row in board.boxes) {
+            for (spot in row) {
                 val piece = spot.chessPiece
                 // Check if there is a piece on the spot and it belongs to the opponent
                 if (piece != null && piece.color != attackerColor) {
                     // Check if the opponent's piece can move to the target position
-                    if (piece.canMove(board, spot, board.getBox(position.row, position.column))) {
+                    if (piece.canMove(board, spot, targetSpot)) {
                         return true // The position is under attack
                     }
                 }
@@ -488,15 +489,16 @@ class King(
     }
 
     private fun isCheck(board: Board, attackerColor: Color): Boolean {
-        // Iterate through all spots on the board
-        for (row in 0 until Board.NUM_ROWS) {
-            for (col in 0 until Board.NUM_COLUMNS) {
-                val spot = board.getBox(row, col)
+        // Cache the target spot before the loop to avoid redundant boundary/lookup calls on every iteration
+        val targetSpot = board.getBox(position.row, position.column)
+        // Iterate directly through board's boxes using fast nested iterators to avoid getBox overhead
+        for (row in board.boxes) {
+            for (spot in row) {
                 val piece = spot.chessPiece
                 // Check if there is a piece on the spot and it belongs to the opponent
                 if (piece != null && piece.color == attackerColor) {
                     // Check if the opponent's piece can move to the king's position
-                    if (piece.canMove(board, spot, board.getBox(position.row, position.column))) {
+                    if (piece.canMove(board, spot, targetSpot)) {
                         return true // The king is in check
                     }
                 }
