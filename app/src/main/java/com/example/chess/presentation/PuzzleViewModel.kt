@@ -14,6 +14,7 @@ import com.example.chess.data.model.Position
 import com.example.chess.data.model.Spot
 import com.example.chess.data.repository.FenConverter
 import com.example.chess.data.repository.GamePlay
+import com.example.chess.data.repository.OpeningBookRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -32,10 +33,11 @@ enum class PuzzleFeedback { NONE, CORRECT, INCORRECT }
 @HiltViewModel
 class PuzzleViewModel @Inject constructor(
     private val puzzleDao: PuzzleDao,
+    private val openingBookRepository: OpeningBookRepository,
 ) : ViewModel() {
 
     private val board = Board()
-    private val game = GamePlay(board, StockfishEngine())
+    private val game = GamePlay(board, StockfishEngine(), openingBookRepository)
 
     val puzzles: StateFlow<List<PuzzleEntity>> = puzzleDao.observeAll()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())

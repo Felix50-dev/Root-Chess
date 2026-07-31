@@ -985,6 +985,20 @@ fun GameSummaryCard(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
 
+            if (summary.openingName != null) {
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text  = if (summary.openingEco != null) {
+                        "${summary.openingName} (${summary.openingEco})"
+                    } else {
+                        summary.openingName
+                    },
+                    style      = MaterialTheme.typography.bodySmall,
+                    color      = MaterialTheme.colorScheme.onSurface,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+
             Spacer(modifier = Modifier.height(12.dp))
 
             Text(

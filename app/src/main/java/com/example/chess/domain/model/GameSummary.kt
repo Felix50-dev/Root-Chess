@@ -9,4 +9,6 @@ data class GameSummary(
     val biggestMistakeMove: String,
     val gameNarrative: String,                    // 2-3 sentence story
     val weaknessHint: String,                     // one actionable tip
+    val openingName: String? = null,
+    val openingEco: String? = null,
 )

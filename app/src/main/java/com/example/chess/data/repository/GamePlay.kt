@@ -28,6 +28,7 @@ import com.example.chess.domain.model.GamePhase
 import com.example.chess.domain.model.GameSummary
 import com.example.chess.domain.model.MoveInsight
 import com.example.chess.domain.model.InsightType
+import com.example.chess.domain.model.OpeningMatch
 import com.example.chess.domain.model.PositionEval
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -65,7 +66,8 @@ private const val MIN_BRILLIANT_MATERIAL_ADVANTAGE_CP = 300
 
 class GamePlay @Inject constructor(
     var board: Board,
-    val stockfish: StockfishEngine
+    val stockfish: StockfishEngine,
+    private val openingBook: OpeningBookRepository
 ) {
     private lateinit var players: List<Player>
     val currentTurn = MutableStateFlow<Player?>(null)
@@ -407,6 +409,7 @@ class GamePlay @Inject constructor(
         val positionEvals = evaluateAllPositions(movesPlayed, onProgress)
         val firstBoard = Board()
         val recognizer = TacticsRecognizer(this)
+        val openingMatch = openingBook.findOpening(movesPlayed)
 
         val rawResults = movesPlayed.indices.map { i ->
             analyzeSingleMove(i, movesPlayed, positionEvals, firstBoard, recognizer)
@@ -424,6 +427,7 @@ class GamePlay @Inject constructor(
                 totalMoves = movesPlayed.size,
                 category = raw.category,
                 nonPawnMaterial = raw.nonPawnMaterial,
+                openingMatch = openingMatch,
             )
         }
 
@@ -438,7 +442,7 @@ class GamePlay @Inject constructor(
             insight.copy(isCriticalMoment = i == criticalIndex)
         }
 
-        val summary = generateGameSummary(markedInsights, criticalIndex)
+        val summary = generateGameSummary(markedInsights, criticalIndex, openingMatch)
         val result = buildAnalysisResult(rawResults)
 
         return result.copy(
@@ -492,6 +496,7 @@ class GamePlay @Inject constructor(
         totalMoves: Int,
         category: String,
         nonPawnMaterial: Int,
+        openingMatch: OpeningMatch? = null,
     ): MoveInsight {
 
         val evalLost = calculateLoss(evalBefore.score, evalAfter.score, moveIndex % 2 == 0)
@@ -557,11 +562,18 @@ class GamePlay @Inject constructor(
                 InsightType.GOOD_DEFENSE to
                         "Strong defensive move. You held the position under pressure."
 
-            // Opening deviation
+            // Opening deviation — if this is exactly the ply where the player left a
+            // known book line, name it; otherwise fall back to the generic message.
             gamePhase == GamePhase.OPENING && evalLost > 30 ->
                 InsightType.OPENING_DEVIATION to
-                        "This deviates from the best opening plan. ${bestMove.toReadable()} " +
-                        "keeps better piece coordination."
+                        if (openingMatch != null && moveIndex == openingMatch.matchedPlyCount) {
+                            "This leaves known theory in the ${openingMatch.opening.name} " +
+                                    "(${openingMatch.opening.eco}). ${bestMove.toReadable()} " +
+                                    "was the book continuation."
+                        } else {
+                            "This deviates from the best opening plan. ${bestMove.toReadable()} " +
+                                    "keeps better piece coordination."
+                        }
 
             else -> InsightType.POSITIONAL_ERROR to
                     buildGenericMessage(category, evalLost, bestMove, playerMoveRank)
@@ -623,7 +635,11 @@ class GamePlay @Inject constructor(
                 "you missed an opportunity to gain ${evalLost / 100f}+ pawns of advantage."
     }
 
-    fun generateGameSummary(insights: List<MoveInsight>, criticalIndex: Int): GameSummary {
+    fun generateGameSummary(
+        insights: List<MoveInsight>,
+        criticalIndex: Int,
+        openingMatch: OpeningMatch? = null,
+    ): GameSummary {
 
         val criticalMove = insights.getOrNull(criticalIndex)
         val biggestSwing = criticalMove?.evalLost ?: 0
@@ -644,6 +660,8 @@ class GamePlay @Inject constructor(
             biggestMistakeMove = criticalMove?.move ?: "",
             gameNarrative = narrative,
             weaknessHint = weakness,
+            openingName = openingMatch?.opening?.name,
+            openingEco = openingMatch?.opening?.eco,
         )
     }
 

@@ -8,6 +8,7 @@ import com.example.chess.data.local.PuzzleDatabase
 import com.example.chess.data.model.Board
 import com.example.chess.data.remote.GeminiApi
 import com.example.chess.data.repository.GamePlay
+import com.example.chess.data.repository.OpeningBookRepository
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -24,9 +25,16 @@ object AppModule {
     fun provideGame(
         board: Board,
         stockfishEngine: StockfishEngine,
+        openingBookRepository: OpeningBookRepository,
         @ApplicationContext context: Context
     ): GamePlay {
-        return GamePlay(board, stockfishEngine)
+        return GamePlay(board, stockfishEngine, openingBookRepository)
+    }
+
+    @Provides
+    @Singleton
+    fun provideOpeningBookRepository(@ApplicationContext context: Context): OpeningBookRepository {
+        return OpeningBookRepository(context)
     }
 
     @Provides
