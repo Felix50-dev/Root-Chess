@@ -1,0 +1,3 @@
+## 2025-02-14 - Board & King Safety Scanning Optimizations
+**Learning:** O(N²) nested loops on grid elements can be significantly reduced. Checking coordinate validity doesn't require a grid scan; an O(1) boundary check is both safer and faster. Furthermore, caching the target Spot outside the piece-scanning loop in isUnderAttack/isCheck avoids dozens of redundant array indexing and boundary check operations on every move validation.
+**Action:** When working with 2D grid/board games, always look for O(1) range constraints to validate coordinate existence, and cache frequently dereferenced lookups outside scanning loops.
