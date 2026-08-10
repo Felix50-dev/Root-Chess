@@ -710,10 +710,11 @@ class GamePlay @Inject constructor(
 
 
     fun findKing(myBoard: Board, playerColor: Color): Spot? {
-        // Iterate through the board to find the king spot of the specified color
+        // Optimize: Use cached row references instead of getBox() boundary-checked calls
         for (row in 0 until Board.NUM_ROWS) {
+            val boardRow = myBoard.boxes[row]
             for (col in 0 until Board.NUM_COLUMNS) {
-                val spot = myBoard.getBox(row, col)
+                val spot = boardRow[col]
                 val piece = spot.chessPiece
                 if (piece != null && piece is King) {
                     if (piece.color == playerColor) {
@@ -728,16 +729,15 @@ class GamePlay @Inject constructor(
     private fun getAlivePieces(player: Player, myBoard: Board): MutableList<ChessPiece> {
         val availablePieces = mutableListOf<ChessPiece>()
         val playerColor = if (player.isWhite) Color.WHITE else Color.BLACK
-        // Iterate through the board to find available pieces
+        // Optimize: Use direct row arrays and single lookup for chessPiece, eliminating multiple redundant getBox calls and bang operators
         for (row in 0 until 8) {
+            val boardRow = myBoard.boxes[row]
             for (col in 0 until 8) {
-                if (myBoard.getBox(row, col).chessPiece != null) {
-                    if (playerColor == myBoard.getBox(row, col).chessPiece!!.color) {
-                        val chessPiece = myBoard.getBox(row, col).chessPiece
-                        val chessPiecePosition = Position(row, col)
-                        chessPiece!!.position = chessPiecePosition
-                        availablePieces += chessPiece
-                    }
+                val spot = boardRow[col]
+                val chessPiece = spot.chessPiece
+                if (chessPiece != null && playerColor == chessPiece.color) {
+                    chessPiece.position = Position(row, col)
+                    availablePieces += chessPiece
                 }
             }
         }
