@@ -171,7 +171,6 @@ class Rook(
 
     private fun isPathClear(board: Board, start: Position, end: Position): Boolean {
         // Check if the path from start to end is clear of obstacles (other pieces)
-        // Check if the path from start to end is clear of obstacles (other pieces)
         if (start.row == end.row) {
             // Moving horizontally (same row)
             val minColumn = min(start.column, end.column)
@@ -470,15 +469,16 @@ class King(
     }
 
     private fun isUnderAttack(board: Board, position: Position, attackerColor: Color): Boolean {
-        // Iterate through all spots on the board
+        // Optimization: Cache targetSpot before loop entry to avoid 64 redundant board.getBox lookups
+        val targetSpot = board.getBox(position.row, position.column)
         for (row in 0 until Board.NUM_ROWS) {
             for (col in 0 until Board.NUM_COLUMNS) {
-                val spot = board.getBox(row, col)
+                val spot = board.boxes[row][col]
                 val piece = spot.chessPiece
                 // Check if there is a piece on the spot and it belongs to the opponent
                 if (piece != null && piece.color != attackerColor) {
                     // Check if the opponent's piece can move to the target position
-                    if (piece.canMove(board, spot, board.getBox(position.row, position.column))) {
+                    if (piece.canMove(board, spot, targetSpot)) {
                         return true // The position is under attack
                     }
                 }
@@ -488,15 +488,16 @@ class King(
     }
 
     private fun isCheck(board: Board, attackerColor: Color): Boolean {
-        // Iterate through all spots on the board
+        // Optimization: Cache targetSpot before loop entry to avoid 64 redundant board.getBox lookups
+        val targetSpot = board.getBox(position.row, position.column)
         for (row in 0 until Board.NUM_ROWS) {
             for (col in 0 until Board.NUM_COLUMNS) {
-                val spot = board.getBox(row, col)
+                val spot = board.boxes[row][col]
                 val piece = spot.chessPiece
                 // Check if there is a piece on the spot and it belongs to the opponent
                 if (piece != null && piece.color == attackerColor) {
                     // Check if the opponent's piece can move to the king's position
-                    if (piece.canMove(board, spot, board.getBox(position.row, position.column))) {
+                    if (piece.canMove(board, spot, targetSpot)) {
                         return true // The king is in check
                     }
                 }
@@ -506,4 +507,3 @@ class King(
     }
 
 }
-
