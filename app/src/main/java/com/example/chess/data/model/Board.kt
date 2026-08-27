@@ -2,13 +2,11 @@ package com.example.chess.data.model
 
 import javax.inject.Inject
 
+class Board(boxesParam: List<List<Spot>>? = null) {
+    @Inject constructor() : this(null)
 
-class Board @Inject constructor() {
-    var boxes: List<List<Spot>>
-
-    init {
-        boxes = resetBoard()
-    }
+    // Optimization: Avoid calling resetBoard() when pre-constructed boxes are provided (e.g. during cloning)
+    var boxes: List<List<Spot>> = boxesParam ?: resetBoard()
 
     fun getBox(x: Int, y: Int): Spot {
         if (x < 0 || x > 7 || y < 0 || y > 7) {
@@ -37,56 +35,43 @@ class Board @Inject constructor() {
             0, 7 -> Rook(color, position, isKilled = false)
             1, 6 -> Knight(color, position, isKilled = false)
             2, 5 -> Bishop(color, position, isKilled = false)
-            3 -> if (color == Color.BLACK) Queen(color, position, isKilled = false) else Queen(color, position, isKilled = false)
-            4 -> if (color == Color.BLACK) King(color, position, isKilled = false) else King(color, position, isKilled = false)
+            3 -> Queen(color, position, isKilled = false)
+            4 -> King(color, position, isKilled = false)
             else -> null
         }
         return Spot(position, piece)
     }
 
-
     fun clone(): Board {
-        val clonedBoard = Board()
-
-        // Create a deep copy of the `boxes` property
+        // Optimization: Create deep copy of boxes directly without redundant default board initialization.
+        // Also reuse immutable Position instances and preserve volatile piece flags (hasMoved, canEnPassant).
         val clonedBoxes = boxes.map { row ->
             row.map { spot ->
-                // Clone the Spot
-                val clonedPosition = Position(spot.position.row, spot.position.column)
+                val position = spot.position
                 val clonedPiece = spot.chessPiece?.let { piece ->
                     when (piece) {
-                        is Pawn -> Pawn(piece.color, clonedPosition, piece.isKilled)
-                        is Rook -> Rook(piece.color, clonedPosition, piece.isKilled)
-                        is Knight -> Knight(piece.color, clonedPosition, piece.isKilled)
-                        is Bishop -> Bishop(piece.color, clonedPosition, piece.isKilled)
-                        is Queen -> Queen(piece.color, clonedPosition, piece.isKilled)
-                        is King -> King(piece.color, clonedPosition, piece.isKilled)
+                        is Pawn -> Pawn(piece.color, position, piece.isKilled, hasMoved = piece.hasMoved, canEnPassant = piece.canEnPassant)
+                        is Rook -> Rook(piece.color, position, piece.isKilled, hasMoved = piece.hasMoved, canEnPassant = piece.canEnPassant)
+                        is Knight -> Knight(piece.color, position, piece.isKilled, hasMoved = piece.hasMoved, canEnPassant = piece.canEnPassant)
+                        is Bishop -> Bishop(piece.color, position, piece.isKilled, hasMoved = piece.hasMoved, canEnPassant = piece.canEnPassant)
+                        is Queen -> Queen(piece.color, position, piece.isKilled, hasMoved = piece.hasMoved, canEnPassant = piece.canEnPassant)
+                        is King -> King(piece.color, position, piece.isKilled, hasMoved = piece.hasMoved, canEnPassant = piece.canEnPassant)
                     }
                 }
-                Spot(clonedPosition, clonedPiece)
+                Spot(position, clonedPiece)
             }
         }
 
-        clonedBoard.boxes = clonedBoxes
-        return clonedBoard
+        return Board(clonedBoxes)
     }
-
 
     fun isValidPosition(position: Position): Boolean {
-        var isPositionValid = false
-        for (row in 0 until NUM_ROWS) {
-            for (column in 0 until NUM_COLUMNS) {
-                if (boxes[row][column].position == position
-                ) isPositionValid = true
-            }
-        }
-        return isPositionValid
+        // Optimization: O(1) bounds check replacing O(N^2) board search loop
+        return position.row in 0 until NUM_ROWS && position.column in 0 until NUM_COLUMNS
     }
-
 
     companion object {
         const val NUM_ROWS: Int = 8
         const val NUM_COLUMNS: Int = 8
     }
 }
-
