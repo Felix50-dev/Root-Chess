@@ -74,6 +74,12 @@ android {
     sourceSets {
         getByName("main").jniLibs.srcDir("libs")  // Directory for native .so files
     }
+
+    testOptions {
+        unitTests {
+            isReturnDefaultValues = true
+        }
+    }
 }
 
 dependencies {
