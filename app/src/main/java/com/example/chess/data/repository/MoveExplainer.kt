@@ -1,6 +1,6 @@
 package com.example.chess.data.repository
 
-import com.example.chess.data.remote.GeminiApi
+import com.example.chess.data.remote.GroqApi
 import com.example.chess.domain.model.MoveExplanationRequest
 import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
@@ -8,7 +8,7 @@ import javax.inject.Singleton
 
 @Singleton
 class MoveExplainer @Inject constructor(
-    private val geminiApi: GeminiApi
+    private val groqApi: GroqApi
 ) {
     // Singleton-scoped and explain() can be invoked concurrently (e.g. rapidly stepping
     // through review moves each launches its own coroutine) — must be thread-safe.
@@ -22,7 +22,7 @@ class MoveExplainer @Inject constructor(
         explanationCache[cacheKey]?.let { return it }
 
         val prompt = buildPrompt(request)
-        val explanation = geminiApi.complete(prompt)
+        val explanation = groqApi.complete(prompt)
         explanationCache[cacheKey] = explanation
         return explanation
     }

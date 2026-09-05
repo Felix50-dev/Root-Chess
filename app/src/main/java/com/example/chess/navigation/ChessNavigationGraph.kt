@@ -11,6 +11,7 @@ import androidx.navigation.navArgument
 import com.example.chess.data.model.AILevel
 import com.example.chess.data.model.GameMode
 import com.example.chess.presentation.BoardAnalysisScreen
+import com.example.chess.presentation.ChatScreen
 import com.example.chess.presentation.ChessAnalysisScreen
 import com.example.chess.presentation.ChessGameScreen
 import com.example.chess.presentation.ChessGameViewModel
@@ -32,6 +33,7 @@ object RootChessDestinations {
     const val REVIEW_GAME_ROUTE = "review"
     const val PUZZLE_LIST_ROUTE = "puzzles"
     const val PUZZLE_SOLVE_ROUTE = "puzzle/{puzzleId}"
+    const val CHAT_ROUTE = "chat"
 }
 
 @Composable
@@ -60,6 +62,9 @@ fun RootChessNavHost(
                 },
                 onOpenPuzzles = {
                     navController.navigate(RootChessDestinations.PUZZLE_LIST_ROUTE)
+                },
+                onOpenChat = {
+                    navController.navigate(RootChessDestinations.CHAT_ROUTE)
                 },
                 onBackPressed = {
                     activity.finish()
@@ -160,6 +165,14 @@ fun RootChessNavHost(
             PuzzleScreen(
                 puzzleId = puzzleId,
                 onBack = { navController.popBackStack() },
+            )
+        }
+        composable(
+            route = RootChessDestinations.CHAT_ROUTE
+        ) {
+            ChatScreen(
+                onBack = { navController.popBackStack() },
+                chessGameViewModel = viewModel,
             )
         }
     }

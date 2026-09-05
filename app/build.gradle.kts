@@ -39,8 +39,8 @@ android {
 
         buildConfigField(
             "String",
-            "GEMINI_API_KEY",
-            "\"${localProperties["GEMINI_API_KEY"]}\""
+            "GROQ_API_KEY",
+            "\"${localProperties["GROQ_API_KEY"]}\""
         )
 
         externalNativeBuild {
@@ -98,7 +98,8 @@ val chessAbis = listOf("armeabi-v7a", "arm64-v8a", "x86", "x86_64")
 // add_executable outputs, so this step is required for every ABI — previously done
 // manually and committed to git for only 2 of the 4 ABIs (and had already gone stale).
 val packageChessNativeExecutables = tasks.register("packageChessNativeExecutables") {
-    chessAbis.forEach { abi -> dependsOn("buildCMakeDebug[$abi][chess]") }
+    // AGP 8.x uses externalNativeBuildDebug to build all ABIs for the debug variant
+    dependsOn("externalNativeBuildDebug")
 
     val outputDir = layout.buildDirectory.dir("generated/jniLibs")
     outputs.dir(outputDir)
@@ -106,7 +107,7 @@ val packageChessNativeExecutables = tasks.register("packageChessNativeExecutable
     doLast {
         chessAbis.forEach { abi ->
             val built = fileTree(layout.buildDirectory.dir("intermediates/cxx")) {
-                include("**/obj/$abi/chess")
+                include("**/Debug/**/obj/$abi/chess")
             }.singleFile
             val dest = outputDir.get().dir(abi).asFile.also { it.mkdirs() }
             built.copyTo(File(dest, "lib_chess.so"), overwrite = true)

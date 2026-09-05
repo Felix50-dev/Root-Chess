@@ -23,7 +23,7 @@ import com.example.chess.data.model.PlayerType
 import com.example.chess.data.model.Position
 import com.example.chess.data.model.SANMovePair
 import com.example.chess.data.model.Spot
-import com.example.chess.data.remote.GeminiApiException
+import com.example.chess.data.remote.GroqApiException
 import com.example.chess.data.repository.GamePlay
 import com.example.chess.data.repository.MoveExplainer
 import com.example.chess.domain.model.GameSummary
@@ -77,7 +77,7 @@ class ChessGameViewModel @Inject constructor(
 
     //boardState
     private val _boardState: MutableStateFlow<BoardState> =
-        MutableStateFlow(BoardState(null, null, lastMovedFrom = null))
+        MutableStateFlow(BoardState(game.board, null, lastMovedFrom = null))
     val boardState: StateFlow<BoardState> = _boardState.asStateFlow()
 
     //detectCheck
@@ -112,7 +112,7 @@ class ChessGameViewModel @Inject constructor(
 
     //pieces killed
     private var _piecesKilled = MutableStateFlow<MutableList<ChessPiece>>(mutableListOf())
-    var piecesKilled: StateFlow<MutableList<ChessPiece>> = _piecesKilled.asStateFlow()
+    var piecesKilled: StateFlow<List<ChessPiece>> = _piecesKilled.asStateFlow()
 
     //moves made
     private val _movesMade = MutableStateFlow<List<String>>(listOf())
@@ -166,10 +166,10 @@ class ChessGameViewModel @Inject constructor(
     val isTransitioning: StateFlow<Boolean> = _isTransitioning.asStateFlow()
 
     // Tracks the in-flight AI move-explanation coroutine so a new Next/Previous tap
-    // cancels the previous one instead of letting concurrent Gemini calls pile up.
+    // cancels the previous one instead of letting concurrent Groq calls pile up.
     private var explanationJob: Job? = null
 
-    // Set once a Gemini call fails with a quota/rate-limit error (HTTP 429), so we stop
+    // Set once a Groq call fails with a quota/rate-limit error (HTTP 429), so we stop
     // firing a doomed network request (and its CPU/IO cost) on every remaining move step
     // for the rest of this session. Exposed publicly so the UI can tell the user AI
     // commentary has fallen back to deterministic insight text, instead of silently
@@ -592,7 +592,7 @@ class ChessGameViewModel @Inject constructor(
         _movesMadeSAN.value = emptyList<SANMovePair>().toMutableList()
         game.piecesKilled.clear()
         _piecesKilled.value = emptyList<ChessPiece>().toMutableList()
-        _boardState.value = BoardState(null, null, game.status, null)
+        _boardState.value = BoardState(game.board, null, game.status, null)
         _selectedPiecePosition.value = null
         _promotionPiece.value = null
         isPromotionPending = false
@@ -869,7 +869,12 @@ class ChessGameViewModel @Inject constructor(
                     moveNumber = index + 1,
                     playerColor = if (index % 2 == 0) "White" else "Black",
                 )
-                val aiExplanation = withTimeout(4000) {
+                // 15s matches GroqApi's own connect/read timeouts — this call is
+                // non-blocking (the deterministic insight is already shown), so a
+                // longer timeout just gives real network round trips a fair chance
+                // instead of cancelling before a cold TLS handshake + generation
+                // can complete.
+                val aiExplanation = withTimeout(15_000) {
                     moveExplainer.explain(request)
                 }
                 // Only update if still on the same move
@@ -882,7 +887,7 @@ class ChessGameViewModel @Inject constructor(
                 // Deterministic insight already shown — fall back to it silently from the
                 // user's perspective, but still log so a real failure is diagnosable.
                 Log.e(TAG, "launchAiExplanation: AI explanation failed, using deterministic insight", e)
-                if (e is GeminiApiException && e.statusCode == 429) {
+                if (e is GroqApiException && e.statusCode == 429) {
                     _aiExplanationDisabled.value = true
                 }
             } finally {
@@ -1072,7 +1077,7 @@ data class Move(
 )
 
 data class BoardState(
-    val board: Board?,
+    val board: Board,
     val currentPlayer: Player?,
     val gameStatus: GameStatus = GameStatus.ACTIVE,
     val lastMovedFrom: Position? = Position(0, 0)
