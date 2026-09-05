@@ -431,15 +431,22 @@ fun ChessGrid(
     showPromotionDialog: Boolean,
     aiLastMove: Move?
 ) {
-    val blackPiecesKilled = piecesKilled.filter {
-        it.color == com.example.chess.data.model.Color.BLACK
+    // Memoize killed pieces and material advantage calculation to avoid re-computation and allocations on every recomposition
+    val blackPiecesKilled = remember(piecesKilled) {
+        piecesKilled.filter {
+            it.color == com.example.chess.data.model.Color.BLACK
+        }
     }
-    val whitePiecesKilled = piecesKilled.filter {
-        it.color == com.example.chess.data.model.Color.WHITE
+    val whitePiecesKilled = remember(piecesKilled) {
+        piecesKilled.filter {
+            it.color == com.example.chess.data.model.Color.WHITE
+        }
     }
 
-    // Black's material advantage
-    val whiteAdvantage = calculateMaterialAdvantage(piecesKilled)
+    // Black's material advantage memoized against piecesKilled changes
+    val whiteAdvantage = remember(piecesKilled) {
+        calculateMaterialAdvantage(piecesKilled)
+    }
     val blackAdvantage = -whiteAdvantage // Black’s perspective
 
     var showStartGameDialog by remember {
@@ -1064,23 +1071,16 @@ fun Panel(
     }
 }
 
+// Optimizing material advantage calculation:
+// Access `ChessPiece.value` directly and iterate over lostPieces without Map allocation or list filtering.
 fun calculateMaterialAdvantage(lostPieces: List<ChessPiece?>): Int {
-    val pieceValues = mapOf(
-        R.drawable.pawn_white to 1, R.drawable.pawn_dark to 1,
-        R.drawable.knight_white to 3, R.drawable.knight_dark to 3,
-        R.drawable.bishop_white to 3, R.drawable.bishop_dark to 3,
-        R.drawable.rook_white to 5, R.drawable.rook_dark to 5,
-        R.drawable.queen_white to 9, R.drawable.queen_dark to 9,
-        R.drawable.king_white to 0, R.drawable.king_dark to 0 // Kings don’t count
-    )
-
     var whiteAdvantage = 0 // Positive means White is ahead, negative means Black is ahead
 
-    lostPieces.filterNotNull().forEach { piece ->
-        val value = pieceValues[piece.vectorAsset] ?: 0
+    for (piece in lostPieces) {
+        if (piece == null || piece is King) continue
         when (piece.color) {
-            com.example.chess.data.model.Color.WHITE -> whiteAdvantage -= value // White loses material
-            com.example.chess.data.model.Color.BLACK -> whiteAdvantage += value // Black loses material
+            com.example.chess.data.model.Color.WHITE -> whiteAdvantage -= piece.value // White loses material
+            com.example.chess.data.model.Color.BLACK -> whiteAdvantage += piece.value // Black loses material
         }
     }
 
