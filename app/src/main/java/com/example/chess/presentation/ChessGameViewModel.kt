@@ -25,8 +25,10 @@ import com.example.chess.data.model.SANMovePair
 import com.example.chess.data.model.Spot
 import com.example.chess.data.remote.GroqApiException
 import com.example.chess.data.repository.GamePlay
+import com.example.chess.data.repository.GameSummaryGenerator
 import com.example.chess.data.repository.MoveExplainer
 import com.example.chess.domain.model.GameSummary
+import com.example.chess.domain.model.GameSummaryRequest
 import com.example.chess.domain.model.MoveExplanationRequest
 import com.example.chess.domain.model.MoveInsight
 import com.example.chess.presentation.model.VisualPiece
@@ -51,6 +53,7 @@ private const val TAG = "ChessGameViewModel"
 class ChessGameViewModel @Inject constructor(
     private val game: GamePlay,
     private val moveExplainer: MoveExplainer,
+    private val gameSummaryGenerator: GameSummaryGenerator,
     private val puzzleDao: PuzzleDao,
     @ApplicationContext context: Context
 ) : ViewModel() {
@@ -177,6 +180,22 @@ class ChessGameViewModel @Inject constructor(
     private val _aiExplanationDisabled = MutableStateFlow(false)
     val aiExplanationDisabled: StateFlow<Boolean> = _aiExplanationDisabled.asStateFlow()
 
+    // Tracks the in-flight AI game-summary coroutine, mirroring explanationJob.
+    private var gameSummaryJob: Job? = null
+
+    // Separate from _aiExplanationDisabled — the per-move feature fires on every
+    // Next/Previous step (many calls per review session) while this fires at most once
+    // per analyzed game. Sharing one flag would let a 429 from one feature prematurely
+    // and permanently disable the other for the rest of this shared VM's lifetime
+    // (which spans multiple games).
+    private val _aiSummaryDisabled = MutableStateFlow(false)
+    val aiSummaryDisabled: StateFlow<Boolean> = _aiSummaryDisabled.asStateFlow()
+
+    // Incremented once per analyzeGame() call; captured locally at launch time and
+    // compared on completion so a late-arriving AI summary from a previous game (in
+    // this shared, multi-game-lifetime VM) can't overwrite a newer game's summary.
+    private var analysisSessionId = 0
+
     fun totalMovesCount(): Int = _movesToSimulate.size
     private var aiJob: Job? = null
     private var isPromotionPending = false
@@ -200,15 +219,21 @@ class ChessGameViewModel @Inject constructor(
     private val _playerMoveArrow = MutableStateFlow<String?>(null)
     val playerMoveArrow: StateFlow<String?> = _playerMoveArrow.asStateFlow()
 
-    private fun buildPGN(upToIndex: Int): String {
-        return _movesToSimulateSAN
-            .take(upToIndex)
+    // sanMoves is a plain move-notation list — despite the "SAN" naming used elsewhere in
+    // this file (_movesToSimulateSAN, convertMovesToSANNotation), these are UCI-style
+    // coordinate strings (e.g. "e2e4"), not true algebraic notation. Pre-existing quirk,
+    // not addressed here — both AI prompt paths (per-move and game-summary) already rely
+    // on this exact convention in production.
+    private fun buildPGN(sanMoves: List<String>): String {
+        return sanMoves
             .chunked(2)
             .mapIndexed { i, pair ->
                 "${i + 1}. ${pair[0]}${if (pair.size > 1) " ${pair[1]}" else ""}"
             }
             .joinToString(" ")
     }
+
+    private fun buildPGN(upToIndex: Int): String = buildPGN(_movesToSimulateSAN.take(upToIndex))
 
     init {
         viewModelScope.launch {
@@ -404,9 +429,12 @@ class ChessGameViewModel @Inject constructor(
                         _analysisProgress.value = current.toFloat() / total.toFloat()
                     }
                 )
+                analysisSessionId++
+                val sessionId = analysisSessionId
                 _analysisResult.value = result
                 _gameSummary.value = result.gameSummary
                 savePuzzlesFromBlunders(result.insights)
+                launchAiGameSummary(result, sessionId)
             } catch (e: Exception) {
                 Log.e(TAG, "analyzeGame: analysis failed", e)
                 _analysisError.value = true
@@ -896,6 +924,37 @@ class ChessGameViewModel @Inject constructor(
         }
     }
 
+    // Kicks off AI enrichment of the (already-displayed, deterministic) game summary,
+    // modeled 1:1 on launchAiExplanation() — see that function's comments for the
+    // reasoning behind the timeout value and the silent-fallback contract.
+    private fun launchAiGameSummary(result: AnalysisResult, sessionId: Int) {
+        if (_aiSummaryDisabled.value) return
+        if (result.gameSummary == null) return
+        gameSummaryJob?.cancel()
+        gameSummaryJob = viewModelScope.launch {
+            try {
+                val pgn = buildPGN(game.convertMovesToNotation(movesPlayedSnapshot()))
+                val request = GameSummaryRequest.fromAnalysisResult(result, pgn, playerElo = 1200)
+                    ?: return@launch
+                val generated = withTimeout(15_000) {
+                    gameSummaryGenerator.generate(request)
+                }
+                // Staleness guard — discard if a newer analyzeGame() call has since
+                // landed (this VM is shared across multiple games in one session).
+                if (sessionId == analysisSessionId) {
+                    _gameSummary.value = _gameSummary.value?.copy(
+                        gameNarrative = generated.narrative,
+                        weaknessHint = generated.weaknessHint,
+                    )
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "launchAiGameSummary: AI game summary failed, using deterministic summary", e)
+                if (e is GroqApiException && e.statusCode == 429) {
+                    _aiSummaryDisabled.value = true
+                }
+            }
+        }
+    }
 
     private fun applyReviewMove(move: com.example.chess.data.model.Move) {
         val piece = move.pieceMoved ?: return
