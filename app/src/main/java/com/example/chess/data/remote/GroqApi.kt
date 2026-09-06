@@ -29,15 +29,19 @@ class GroqApi @Inject constructor() {
                     put("content", prompt)
                 })
             })
-            // MODEL is a reasoning model — hidden reasoning tokens (observed ~25-30 even
-            // at reasoning_effort="low") come out of this same budget before the model
-            // writes the visible answer. 120 was tuned for a non-reasoning model and cut
-            // real explanations off mid-sentence (finish_reason "length"); 300 leaves
-            // headroom for reasoning + a full 2-3 sentence answer (observed ~140 total).
-            // The prompt's own "max 2 sentences" instruction — not this cap — is what
-            // keeps the visible answer short; this is just a ceiling against runaway output.
+            // MODEL is a reasoning model — hidden reasoning tokens come out of this same
+            // budget before the model writes the visible answer. A raw FEN string in the
+            // prompt (an earlier version of this fix) made reasoning usage huge and volatile
+            // on verification-heavy positions (250-300+ tokens, sometimes truncating the
+            // answer entirely). MoveExplainer now sends pre-verified plain-English facts
+            // instead of a FEN (see ExplanationFacts/GamePlay.explanationFacts) — reasoning
+            // dropped back to ~6-26 tokens even on forced-mate explanations, empirically
+            // verified with zero truncation across 8 live-API test runs. 500 is a generous
+            // ceiling against runaway output, not a budget this prompt shape is expected to
+            // approach; the prompt's own "max 2 sentences" instruction is what actually
+            // keeps the visible answer short.
             put("temperature", 0.6)
-            put("max_tokens", 300)
+            put("max_tokens", 500)
         }
         return executeChatCompletion(requestBody)
     }

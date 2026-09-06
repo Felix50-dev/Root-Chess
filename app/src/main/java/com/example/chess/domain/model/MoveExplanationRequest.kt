@@ -11,7 +11,7 @@ data class MoveExplanationRequest(
     val tactic: List<String>?,      // from TacticsRecognizer e.g. ["Fork", "Pin"]
     val mateIn: Int?,               // if MissedMate, how many moves
     val matingPiece: String?,       // piece that delivers mate
-    val pgn: String,                // game so far in PGN format
+    val facts: List<String>,        // deterministic, verified facts about the position/move — see ExplanationFacts
     val playerElo: Int,             // for explanation depth calibration
     val moveNumber: Int,            // move number in the game
     val playerColor: String         // "White" or "Black"
@@ -21,7 +21,7 @@ data class MoveExplanationRequest(
         fun fromAnalysisResult(
             index: Int,
             result: AnalysisResult,
-            pgn: String,
+            facts: List<String>,
             playerElo: Int
         ): MoveExplanationRequest {
             val missedMate = result.missedMates.getOrNull(index)
@@ -36,7 +36,7 @@ data class MoveExplanationRequest(
                 tactic = result.tactics.getOrNull(index),
                 mateIn = missedMate?.mateInBefore,
                 matingPiece = missedMate?.moveObject?.pieceMoved?.toString(),
-                pgn = pgn,
+                facts = facts,
                 playerElo = playerElo,
                 moveNumber = index + 1,
                 playerColor = if (index % 2 == 0) "White" else "Black"

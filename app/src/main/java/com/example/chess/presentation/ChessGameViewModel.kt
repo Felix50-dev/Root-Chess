@@ -222,8 +222,9 @@ class ChessGameViewModel @Inject constructor(
     // sanMoves is a plain move-notation list — despite the "SAN" naming used elsewhere in
     // this file (_movesToSimulateSAN, convertMovesToSANNotation), these are UCI-style
     // coordinate strings (e.g. "e2e4"), not true algebraic notation. Pre-existing quirk,
-    // not addressed here — both AI prompt paths (per-move and game-summary) already rely
-    // on this exact convention in production.
+    // not addressed here — the game-summary AI prompt path relies on this exact convention
+    // in production. (The per-move explanation path moved off raw PGN/FEN entirely — see
+    // GamePlay.explanationFacts.)
     private fun buildPGN(sanMoves: List<String>): String {
         return sanMoves
             .chunked(2)
@@ -232,8 +233,6 @@ class ChessGameViewModel @Inject constructor(
             }
             .joinToString(" ")
     }
-
-    private fun buildPGN(upToIndex: Int): String = buildPGN(_movesToSimulateSAN.take(upToIndex))
 
     init {
         viewModelScope.launch {
@@ -892,7 +891,7 @@ class ChessGameViewModel @Inject constructor(
                         ?.getOrNull(index)?.mateInBefore,
                     matingPiece = _analysisResult.value?.missedMates
                         ?.getOrNull(index)?.moveObject?.pieceMoved?.toString(),
-                    pgn = buildPGN(index),
+                    facts = game.explanationFacts(_movesToSimulateSAN, index, insight.hungPieceSquare),
                     playerElo = 1200,
                     moveNumber = index + 1,
                     playerColor = if (index % 2 == 0) "White" else "Black",

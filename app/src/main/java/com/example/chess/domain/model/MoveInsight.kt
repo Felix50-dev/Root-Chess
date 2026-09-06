@@ -14,6 +14,7 @@ data class MoveInsight(
     val isCriticalMoment: Boolean,  // biggest swing in the game
     val gamePhase: GamePhase,
     val solutionGap: Int? = null,  // eval gap between best and 2nd-best line at this position
+    val hungPieceSquare: String? = null,  // square of the piece this move leaves undefended, if any
 )
 
 enum class InsightType {

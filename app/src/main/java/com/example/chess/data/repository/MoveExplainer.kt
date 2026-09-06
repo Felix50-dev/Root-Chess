@@ -16,9 +16,9 @@ class MoveExplainer @Inject constructor(
 
     suspend fun explain(request: MoveExplanationRequest): String {
 
-        // Keyed on the full PGN (not just its length) so two different games that
-        // happen to reach the same move/category at the same PGN length don't collide.
-        val cacheKey = "${request.pgn}_${request.movePlayed}_${request.type}"
+        // Keyed on the full fact list (not just its length) so two different games that
+        // happen to reach the same move/category with the same facts don't collide.
+        val cacheKey = "${request.facts.joinToString()}_${request.movePlayed}_${request.type}"
         explanationCache[cacheKey]?.let { return it }
 
         val prompt = buildPrompt(request)
@@ -45,23 +45,29 @@ class MoveExplainer @Inject constructor(
             else -> "a reasonable move"
         }
 
+        val factsBlock = r.facts.joinToString("\n") { "- $it" }
+
         return """
             You are a chess coach explaining a single move to a ${r.playerElo} rated player.
-            
-            Game so far (PGN): ${r.pgn}
+
+            Facts (verified — the only source of truth for this position; nothing else about
+            piece locations or board geometry is true unless stated here):
+            $factsBlock
+
             Move number: ${r.moveNumber}
             Player color: ${r.playerColor}
-            Move played: ${r.movePlayed}
             Move category: ${r.type} ($evalDescription)
             Best move was: ${r.bestMove ?: "the move played"}
             Eval change: ${r.evalDelta} pawns
             $tacticContext
             $mateContext
-            
+
             Rules:
+            - You may ONLY reference squares, pieces, and moves listed in the Facts above — never invent, guess, or assume a piece location, square, or variation that isn't explicitly given
+            - If a detail isn't in the Facts, omit it rather than guess
             - Max 2 sentences
             - Explain WHY not just what happened
-            - Name specific pieces and squares
+            - Name specific pieces and squares, using only the Facts above
             - Complexity matches ${r.playerElo} elo: ${eloGuidance(r.playerElo)}
             - If a tactic was present, name it and the pieces involved
             - Never say "the engine prefers"

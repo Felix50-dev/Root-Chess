@@ -101,6 +101,7 @@ class GamePlay @Inject constructor(
         val isWhiteMove: Boolean,
         val nonPawnMaterial: Int,
         val hungPiece: ChessPiece?,
+        val hungPieceSquare: String?,
     )
 
     fun init(p1: Player, p2: Player, canClearMoves: Boolean) {
@@ -431,6 +432,7 @@ class GamePlay @Inject constructor(
                 nonPawnMaterial = raw.nonPawnMaterial,
                 openingMatch = openingMatch,
                 hungPiece = raw.hungPiece,
+                hungPieceSquare = raw.hungPieceSquare,
             )
         }
 
@@ -457,28 +459,128 @@ class GamePlay @Inject constructor(
 
     // Turns a just-analyzed game's Blunders/Mistakes into replayable puzzles: the
     // position right before the mistake, plus the correct move the player missed.
+    // Replays movesPlayed[0 until index] onto a fresh isolated board, so callers can
+    // read the exact position immediately before ply `index` without touching live game state.
+    private fun replayBoardUpTo(movesPlayed: List<String>, index: Int): Board {
+        val whitePlayer = Player(isWhite = true, playerType = PlayerType.HUMAN)
+        val blackPlayer = Player(isWhite = false, playerType = PlayerType.HUMAN)
+
+        val replayBoard = Board()
+        for (ply in 0 until index) {
+            val player = if (ply % 2 == 0) whitePlayer else blackPlayer
+            val move = convertToMoveObject(movesPlayed[ply], replayBoard, player)
+            applyMove(move, replayBoard)
+        }
+        return replayBoard
+    }
+
+    // Deterministic, ground-truth facts about movesPlayed[index] and the position it lands
+    // in — handed to the AI move-explainer verbatim so it never has to infer board geometry
+    // (raw FEN was tried first and empirically still hallucinated piece identity; see
+    // MoveExplainer). hungPieceSquare, if known, comes from MoveInsight.hungPieceSquare —
+    // computed once during analysis, not re-derived here.
+    fun explanationFacts(movesPlayed: List<String>, index: Int, hungPieceSquare: String?): List<String> {
+        val board = replayBoardUpTo(movesPlayed, index)
+        val mover = if (index % 2 == 0) Player(isWhite = true, playerType = PlayerType.HUMAN)
+        else Player(isWhite = false, playerType = PlayerType.HUMAN)
+        val opponent = Player(isWhite = !mover.isWhite, playerType = PlayerType.HUMAN)
+
+        val move = convertToMoveObject(movesPlayed[index], board, mover)
+        applyMove(move, board) // board is a disposable analysis copy — safe to mutate further
+
+        val givesCheck = detectCheck(opponent, board)
+        val checkEscapeFacts = if (givesCheck) buildCheckEscapeFacts(board, opponent, mover) else emptyList()
+
+        val hungPiece = hungPieceSquare?.let { square ->
+            val position = Position.fromAlgebraicNotation(square)
+            board.getBox(position.row, position.column).chessPiece
+        }
+
+        return ExplanationFacts.build(
+            board = board,
+            move = move,
+            givesCheck = givesCheck,
+            checkEscapeFacts = checkEscapeFacts,
+            hungPiece = hungPiece,
+            hungSquare = hungPieceSquare,
+        )
+    }
+
+    // Only answers one question, for the king that's currently in check: for each of its
+    // up-to-8 adjacent squares, is it blocked (own piece) or attacked (by what)? Deliberately
+    // does not attempt full block/capture-by-other-pieces analysis — see ExplanationFacts.
+    private fun buildCheckEscapeFacts(board: Board, kingOwner: Player, attacker: Player): List<String> {
+        val kingColor = if (kingOwner.isWhite) Color.WHITE else Color.BLACK
+        val attackerColor = if (attacker.isWhite) Color.WHITE else Color.BLACK
+        val kingSpot = findKing(board, kingColor) ?: return emptyList()
+        val attackerPieces = getAlivePieces(attacker, board)
+
+        val facts = mutableListOf<String>()
+        val kingRow = kingSpot.position.row
+        val kingCol = kingSpot.position.column
+        for (dRow in -1..1) {
+            for (dCol in -1..1) {
+                if (dRow == 0 && dCol == 0) continue
+                val row = kingRow + dRow
+                val col = kingCol + dCol
+                if (row !in 0 until Board.NUM_ROWS || col !in 0 until Board.NUM_COLUMNS) continue
+                val square = board.getBox(row, col)
+                val squareName = square.position.toAlgebraicNotation()
+                val occupant = square.chessPiece
+                when {
+                    occupant != null && occupant.color == kingColor ->
+                        facts += "King cannot move to $squareName (blocked by own ${occupant.typeName()})"
+                    else -> {
+                        val attackers = attackerPieces.filter {
+                            it.canMove(board, board.getBox(it.position.row, it.position.column), square)
+                        }
+                        if (attackers.isNotEmpty()) {
+                            val by = attackers.joinToString(" and ") { "${it.typeName()} on ${it.position.toAlgebraicNotation()}" }
+                            facts += "King cannot move to $squareName (attacked by $by)"
+                        }
+                    }
+                }
+            }
+        }
+
+        // Whether the king can simply capture the checking piece — only meaningful (and only
+        // stated) when the checker is adjacent to the king in the first place.
+        val checkers = attackerPieces.filter {
+            it.canMove(board, board.getBox(it.position.row, it.position.column), kingSpot)
+        }
+        checkers.firstOrNull()?.let { checker ->
+            val adjacent = kotlin.math.abs(checker.position.row - kingRow) <= 1 &&
+                kotlin.math.abs(checker.position.column - kingCol) <= 1
+            if (adjacent) {
+                val checkerSquare = board.getBox(checker.position.row, checker.position.column)
+                val otherAttackers = attackerPieces.filter {
+                    it !== checker && it.canMove(board, board.getBox(it.position.row, it.position.column), checkerSquare)
+                }
+                facts += if (otherAttackers.isNotEmpty()) {
+                    val defendedBy = otherAttackers.joinToString(" and ") { "${it.typeName()} on ${it.position.toAlgebraicNotation()}" }
+                    "King cannot capture the checking ${checker.typeName()} on ${checker.position.toAlgebraicNotation()} (defended by $defendedBy)"
+                } else {
+                    "King can capture the checking ${checker.typeName()} on ${checker.position.toAlgebraicNotation()}"
+                }
+            }
+        }
+
+        return facts
+    }
+
     // Deliberately a separate post-processing pass over analyzeMoveScores' own output,
     // rather than folded into that loop, so it can't risk the already-working analysis.
     fun extractPuzzleCandidates(
         movesPlayed: List<String>,
         insights: List<MoveInsight>,
     ): List<PuzzleCandidate> {
-        val whitePlayer = Player(isWhite = true, playerType = PlayerType.HUMAN)
-        val blackPlayer = Player(isWhite = false, playerType = PlayerType.HUMAN)
-
         return insights.mapIndexedNotNull { index, insight ->
             if (insight.category != "Blunder" && insight.category != "Mistake") return@mapIndexedNotNull null
             // No second-best-line data (e.g. a forced-mate position) is treated as
             // "allow" rather than reject, so missed-mate puzzles aren't filtered out.
             if ((insight.solutionGap ?: MIN_UNIQUE_SOLUTION_GAP_CP) < MIN_UNIQUE_SOLUTION_GAP_CP) return@mapIndexedNotNull null
 
-            val replayBoard = Board()
-            for (ply in 0 until index) {
-                val player = if (ply % 2 == 0) whitePlayer else blackPlayer
-                val move = convertToMoveObject(movesPlayed[ply], replayBoard, player)
-                applyMove(move, replayBoard)
-            }
-
+            val replayBoard = replayBoardUpTo(movesPlayed, index)
             val activeColor = if (index % 2 == 0) Color.WHITE else Color.BLACK
             PuzzleCandidate(
                 fen = FenConverter.toFen(replayBoard, activeColor),
@@ -501,6 +603,7 @@ class GamePlay @Inject constructor(
         nonPawnMaterial: Int,
         openingMatch: OpeningMatch? = null,
         hungPiece: ChessPiece? = null,
+        hungPieceSquare: String? = null,
     ): MoveInsight {
 
         val evalLost = calculateLoss(evalBefore.score, evalAfter.score, moveIndex % 2 == 0)
@@ -597,6 +700,7 @@ class GamePlay @Inject constructor(
             isCriticalMoment = false,  // set after all moves analyzed
             gamePhase = gamePhase,
             solutionGap = solutionGap,
+            hungPieceSquare = hungPieceSquare,
         )
     }
 
@@ -926,6 +1030,10 @@ class GamePlay @Inject constructor(
         val hungPiece = if (isValidAlgebraicMove(evalAfter.bestMove)) {
             convertToMoveObject(evalAfter.bestMove, firstBoard, opponentPlayer).pieceKilled
         } else null
+        // Captured as a plain square string (not re-derived from hungPiece.position later) —
+        // firstBoard keeps advancing for the rest of the game's analysis, so a live piece
+        // reference's .position would drift to wherever that piece ends up by game end.
+        val hungPieceSquare = if (hungPiece != null) evalAfter.bestMove.substring(2, 4) else null
 
         return SingleMoveResult(
             category = category,
@@ -938,6 +1046,7 @@ class GamePlay @Inject constructor(
             isWhiteMove = isWhiteMove,
             nonPawnMaterial = nonPawnMaterial,
             hungPiece = hungPiece,
+            hungPieceSquare = hungPieceSquare,
         )
     }
 
