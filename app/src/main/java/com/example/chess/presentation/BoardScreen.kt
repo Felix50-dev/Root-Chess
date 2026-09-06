@@ -19,6 +19,7 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -28,6 +29,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
@@ -64,7 +67,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
@@ -72,10 +74,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
-import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.chess.R
 import com.example.chess.data.model.Bishop
 import com.example.chess.data.model.ChessPiece
@@ -90,7 +92,6 @@ import com.example.chess.data.model.Spot
 import com.example.chess.presentation.model.SquareUiState
 import com.example.chess.presentation.model.VisualPiece
 import com.example.chess.presentation.model.buildSquareUiStates
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
@@ -151,84 +152,83 @@ fun ChessGameScreen(
         )
     }
 
-    boardState.board?.let {
-        boardState.currentPlayer?.let {
-            ChessGrid(
-                currentPlayer = boardState.currentPlayer!!,
-                boardState = boardState,
-                isInCheck = isInCheck,
-                lastMove = lastMove,
-                validMoves = validMoves,
-                onSelectSpot = chessGameViewModel::onSelectSpot,
-                onMovePieceTo = { position ->
-                    chessGameViewModel.movePieceTo(position)
-                },
-                onSetPromotionPiece = chessGameViewModel::setPromotedPiece,
-                onUndoMove = { chessGameViewModel.undoMove() },
-                onRedoMove = { chessGameViewModel.redoMove() },
-                onStartNewGame = { chessGameViewModel.startNewGame() },
-                onQuitGame = {
-                    chessGameViewModel.quitGame()
-                },
-                onExitGame = {
-                    onExitGame()
-                },
-                onAnalzeGame = {
-                    onAnalyzeGame()
-                },
-                checkPosition = checkPosition,
-                piecesKilled = piecesKilled,
-                movesMadeSan = movesMadeSAN,
-                showPromotionDialog = showPawnPromotion,
-                aiLastMove = aiLastMove,
-                visualPieces = visualPieces
-            )
-        }
-        Log.d(TAG, "ChessGameScreen last moved piece: ${boardState.lastMovedFrom}")
-        LaunchedEffect(boardState.gameStatus) {
-            when (boardState.gameStatus) {
-                GameStatus.WHITE_WIN,
-                GameStatus.BLACK_WIN -> {
-                    delay(300) // wait for piece animation
-                    delay(500) // dramatic pause 😎
-                    checkMateDialog = true
-                }
+    boardState.currentPlayer?.let { currentPlayer ->
+        ChessGrid(
+            currentPlayer = currentPlayer,
+            boardState = boardState,
+            isInCheck = isInCheck,
+            lastMove = lastMove,
+            validMoves = validMoves,
+            onSelectSpot = chessGameViewModel::onSelectSpot,
+            onMovePieceTo = { position ->
+                chessGameViewModel.movePieceTo(position)
+            },
+            onSetPromotionPiece = chessGameViewModel::setPromotedPiece,
+            onUndoMove = { chessGameViewModel.undoMove() },
+            onRedoMove = { chessGameViewModel.redoMove() },
+            onStartNewGame = { chessGameViewModel.startNewGame() },
+            onQuitGame = {
+                chessGameViewModel.quitGame()
+            },
+            onExitGame = {
+                onExitGame()
+            },
+            onAnalzeGame = {
+                onAnalyzeGame()
+            },
+            checkPosition = checkPosition,
+            piecesKilled = piecesKilled,
+            movesMadeSan = movesMadeSAN,
+            showPromotionDialog = showPawnPromotion,
+            aiLastMove = aiLastMove,
+            visualPieces = visualPieces
+        )
+    }
 
-                GameStatus.STALEMATE -> {
-                    delay(300)
-                    delay(500)
-                    staleMateDialog = true
-                }
-
-                else -> Unit
+    Log.d(TAG, "ChessGameScreen last moved piece: ${boardState.lastMovedFrom}")
+    LaunchedEffect(boardState.gameStatus) {
+        when (boardState.gameStatus) {
+            GameStatus.WHITE_WIN,
+            GameStatus.BLACK_WIN -> {
+                delay(300) // wait for piece animation
+                delay(500) // dramatic pause 😎
+                checkMateDialog = true
             }
+
+            GameStatus.STALEMATE -> {
+                delay(300)
+                delay(500)
+                staleMateDialog = true
+            }
+
+            else -> Unit
         }
-        AnimatedVisibility(visible = checkMateDialog) {
+    }
+    AnimatedVisibility(visible = checkMateDialog) {
+        CheckmateDialog(
+            text = when (boardState.gameStatus) {
+                GameStatus.WHITE_WIN -> "Checkmate — White wins"
+                GameStatus.BLACK_WIN -> "Checkmate — Black wins"
+                else -> "CheckMate"
+            },
+            onNewGameSelected = {
+                chessGameViewModel.startNewGame()
+                checkMateDialog = false
+            }) {
+            checkMateDialog = false
+            chessGameViewModel.resetGameStatus()
+        }
+    }
+    if (boardState.gameStatus == GameStatus.STALEMATE) {
+        AnimatedVisibility(visible = staleMateDialog) {
             CheckmateDialog(
-                text = when (boardState.gameStatus) {
-                    GameStatus.WHITE_WIN -> "Checkmate — White wins"
-                    GameStatus.BLACK_WIN -> "Checkmate — Black wins"
-                    else -> "CheckMate"
-                },
+                text = "StaleMate",
                 onNewGameSelected = {
                     chessGameViewModel.startNewGame()
-                    checkMateDialog = false
-                }) {
-                checkMateDialog = false
-                chessGameViewModel.resetGameStatus()
-            }
-        }
-        if (boardState.gameStatus == GameStatus.STALEMATE) {
-            AnimatedVisibility(visible = staleMateDialog) {
-                CheckmateDialog(
-                    text = "StaleMate",
-                    onNewGameSelected = {
-                        chessGameViewModel.startNewGame()
-                        staleMateDialog = false
-                    }) {
                     staleMateDialog = false
-                    chessGameViewModel.resetGameStatus()
-                }
+                }) {
+                staleMateDialog = false
+                chessGameViewModel.resetGameStatus()
             }
         }
     }
@@ -468,26 +468,22 @@ fun ChessGrid(
     onExitGame: () -> Unit,
     onAnalzeGame: () -> Unit,
     checkPosition: Position,
-    piecesKilled: MutableList<ChessPiece>,
+    piecesKilled: List<ChessPiece>,
     movesMadeSan: MutableList<SANMovePair>,
     showPromotionDialog: Boolean,
     aiLastMove: Move?,
     visualPieces: ImmutableList<VisualPiece>
 ) {
 
-    remember(boardState.board) {
-        boardState.board
-            ?.boxes
-            ?.flatten()
-            ?.mapNotNull { it.chessPiece }
-            ?: emptyList()
+    val blackPiecesKilled = remember (piecesKilled) {
+        piecesKilled.filter {
+            it.color == com.example.chess.data.model.Color.BLACK
+        }
     }
-
-    val blackPiecesKilled = piecesKilled.filter {
-        it.color == com.example.chess.data.model.Color.BLACK
-    }
-    val whitePiecesKilled = piecesKilled.filter {
-        it.color == com.example.chess.data.model.Color.WHITE
+    val whitePiecesKilled = remember {
+        piecesKilled.filter {
+            it.color == com.example.chess.data.model.Color.WHITE
+        }
     }
 
     // Black's material advantage
@@ -500,9 +496,6 @@ fun ChessGrid(
     var showExitDialog by remember {
         mutableStateOf(false)
     }
-
-    val screenWidth = LocalConfiguration.current.screenWidthDp.toFloat()
-    val squareSize = (screenWidth / 8).dp
 
     if (showStartGameDialog) {
         StartGameDialog(
@@ -538,10 +531,12 @@ fun ChessGrid(
     }
 
 
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
+    BoxWithConstraints(
+        modifier = Modifier.fillMaxSize()
     ) {
+        val scope = this
+        val isLandscape = scope.maxWidth > scope.maxHeight
+        
         Image(
             painter = painterResource(id = R.drawable.chesstable),
             contentDescription = "chess table",
@@ -549,215 +544,207 @@ fun ChessGrid(
             contentScale = ContentScale.FillBounds
         )
 
+        // Calculate board size based on available space
+        val labelSize = 20.dp
+        val verticalPadding = 32.dp
+        val panelHeight = 60.dp
+        val topButtonsHeight = 40.dp
+        val totalReservedHeight = (verticalPadding * 2) + (panelHeight * 2) + topButtonsHeight + 60.dp + labelSize
+        
+        val boardSize = if (isLandscape) {
+            minOf(scope.maxWidth * 0.6f, scope.maxHeight - labelSize - 40.dp)
+        } else {
+            minOf(scope.maxWidth - labelSize, scope.maxHeight - totalReservedHeight)
+        }
+        val squareSize = boardSize / 8
+
         Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .align(Alignment.TopStart)
-                .padding(top = 32.dp),
+            modifier = Modifier.fillMaxSize()
         ) {
-            Row(
+            // Top Section
+            Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .align(Alignment.CenterHorizontally),
-                horizontalArrangement = Arrangement.Center
+                    .padding(top = 16.dp),
             ) {
-                Spacer(modifier = Modifier.weight(1f))
-                Surface(
-                    shape = CircleShape,
-                    modifier = Modifier.size(30.dp),
-                    color = Color(0xFFA26232),
-                    tonalElevation = 8.dp
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.Center
                 ) {
-                    Image(
-                        painter = painterResource(id = R.drawable.baseline_restart_alt_24),
-                        contentDescription = "restart button",
-                        modifier = Modifier
-                            .clickable {
-                                showStartGameDialog = true
-                            }
-                    )
-                }
-                Spacer(modifier = Modifier.weight(0.3f))
-                Surface(
-                    shape = CircleShape,
-                    modifier = Modifier.size(30.dp),
-                    color = Color(0xFFA26232),
-                    tonalElevation = 8.dp
-                ) {
-                    Image(
-                        painter = painterResource(id = R.drawable.baseline_fullscreen_exit_24),
-                        contentDescription = "exit button",
-                        modifier = Modifier
-                            .clickable {
-                                showExitDialog = true
-                            }
-                    )
-                }
-                Spacer(modifier = Modifier.weight(1f))
-            }
-            Spacer(modifier = Modifier.height(8.dp))
-            Panel(
-                lostPieces = whitePiecesKilled.toMutableList(),
-                moves = movesMadeSan,
-                modifier = Modifier.fillMaxWidth(),
-                advantage = blackAdvantage
-            )
-        }
-
-        Column(
-            modifier = modifier
-                .fillMaxSize(),
-            verticalArrangement = Arrangement.Center,
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            Row(
-                modifier = modifier.align(Alignment.CenterHorizontally)
-            ) {
-                Column {
-                    // Row labels from a to h
-                    ('8' downTo '1').forEach { char ->
-                        Box(
-                            modifier = Modifier
-                                .height(squareSize)
-                                .background(color = Color(0xFFA26232))
-                        ) {
-                            Text(
-                                text = char.toString(),
-                                textAlign = TextAlign.Center,
-                                fontWeight = FontWeight.Bold,
-                                modifier = modifier.align(Alignment.Center),
-                                fontSize = 10.sp
-                            )
-                        }
+                    Spacer(modifier = Modifier.weight(1f))
+                    Surface(
+                        shape = CircleShape,
+                        modifier = Modifier.size(30.dp),
+                        color = Color(0xFFA26232),
+                        tonalElevation = 8.dp
+                    ) {
+                        Image(
+                            painter = painterResource(id = R.drawable.baseline_restart_alt_24),
+                            contentDescription = "restart button",
+                            modifier = Modifier.clickable { showStartGameDialog = true }
+                        )
                     }
+                    Spacer(modifier = Modifier.weight(0.3f))
+                    Surface(
+                        shape = CircleShape,
+                        modifier = Modifier.size(30.dp),
+                        color = Color(0xFFA26232),
+                        tonalElevation = 8.dp
+                    ) {
+                        Image(
+                            painter = painterResource(id = R.drawable.baseline_fullscreen_exit_24),
+                            contentDescription = "exit button",
+                            modifier = Modifier.clickable { showExitDialog = true }
+                        )
+                    }
+                    Spacer(modifier = Modifier.weight(1f))
                 }
-                var boardSizePx by remember { mutableStateOf<IntSize?>(null) }
+                Spacer(modifier = Modifier.height(4.dp))
+                Panel(
+                    lostPieces = whitePiecesKilled,
+                    moves = movesMadeSan,
+                    modifier = Modifier.fillMaxWidth(),
+                    advantage = blackAdvantage
+                )
+            }
 
-                val squareSizePx = remember(boardSizePx) {
-                    boardSizePx?.width?.div(8)
-                }
-
-                squareSizePx?.let {
-                    with(LocalDensity.current) { it.toDp() }
-                }
-
-                val squareStates = remember(boardState.board, validMoves, lastMove, aiLastMove, isInCheck, checkPosition) {
-                    buildSquareUiStates(boardState.board, validMoves, lastMove, aiLastMove, isInCheck, checkPosition)
-                }
-
-                Box(
-                    modifier = Modifier
-                        .size(squareSize * 8)
+            // Board Section - Takes up the remaining space but maintains 1:1 aspect ratio
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth(),
+                contentAlignment = Alignment.Center
+            ) {
+                Row(
+                    modifier = Modifier.wrapContentSize()
                 ) {
                     Column {
-                        squareStates.chunked(8).forEach { rowStates ->
-                            Row {
-                                rowStates.forEach { square ->
-                                    key(square.position.row, square.position.column) {
-                                        ChessSquare(
-                                            square = square,
-                                            onSelectSpot = { pos ->
-                                                boardState.board?.getBox(pos.row, pos.column)
-                                                    ?.let { spot -> onSelectSpot(spot) }
-                                            },
-                                            onMovePieceTo = { position ->
-                                                onMovePieceTo(position)
-                                            },
-                                            squareSize = squareSize,
-                                        )
+                        // Row labels 8..1
+                        ('8' downTo '1').forEach { char ->
+                            Box(
+                                modifier = Modifier
+                                    .height(squareSize)
+                                    .width(labelSize)
+                                    .background(color = Color(0xFFA26232))
+                            ) {
+                                Text(
+                                    text = char.toString(),
+                                    textAlign = TextAlign.Center,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.align(Alignment.Center),
+                                    fontSize = 11.sp,
+                                    color = Color.White.copy(alpha = 0.9f)
+                                )
+                            }
+                        }
+                    }
+                    
+                    val squareStates = remember(boardState.board, validMoves, lastMove, aiLastMove, isInCheck, checkPosition) {
+                        buildSquareUiStates(boardState.board, validMoves, lastMove, aiLastMove, isInCheck, checkPosition)
+                    }
+
+                    Column {
+                        Box(modifier = Modifier.size(boardSize)) {
+                            Column {
+                                squareStates.chunked(8).forEach { rowStates ->
+                                    Row {
+                                        rowStates.forEach { square ->
+                                            key(square.position.row, square.position.column) {
+                                                ChessSquare(
+                                                    square = square,
+                                                    onSelectSpot = { pos ->
+                                                        onSelectSpot(boardState.board.getBox(pos.row, pos.column))
+                                                    },
+                                                    onMovePieceTo = { position -> onMovePieceTo(position) },
+                                                    squareSize = squareSize,
+                                                )
+                                            }
+                                        }
                                     }
+                                }
+                            }
+                            PiecesLayer(
+                                pieces = visualPieces,
+                                squareSize = squareSize
+                            )
+                        }
+                        
+                        Row {
+                            ('a'..'h').forEach { char ->
+                                Box(
+                                    modifier = Modifier
+                                        .size(width = squareSize, height = labelSize)
+                                        .background(color = Color(0xFFA26232))
+                                ) {
+                                    Text(
+                                        text = char.toString(),
+                                        modifier = Modifier.align(Alignment.Center),
+                                        textAlign = TextAlign.Center,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 11.sp,
+                                        color = Color.White.copy(alpha = 0.9f)
+                                    )
                                 }
                             }
                         }
                     }
-                    PiecesLayer(
-                        pieces = visualPieces,
-                        squareSize = squareSize
-                    )
                 }
             }
-            Row(
-                modifier = Modifier.align(Alignment.CenterHorizontally)
-            ) {
-                // Row labels from a to h
-                ('a'..'h').forEach { char ->
-                    Box(
-                        modifier = Modifier
-                            .weight(1f)
-                            .background(color = Color(0xFFA26232))
-                    ) {
-                        Text(
-                            text = char.toString(),
-                            modifier = modifier.align(Alignment.Center),
-                            textAlign = TextAlign.Center,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 10.sp
-                        )
-                    }
-                }
-            }
-        }
 
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .align(Alignment.BottomStart)
-                .padding(bottom = 32.dp),
-        ) {
-            AnalyzeGameButton(
-                modifier = Modifier
-                    .align(Alignment.CenterHorizontally)
-                    .padding(bottom = 16.dp),
-                text = "Analyze Game",
-                iconRes = R.drawable.baseline_fullscreen_exit_24,
-                onClick = { onAnalzeGame() }
-            )
-            Panel(
-                lostPieces = blackPiecesKilled.toMutableList(),
-                moves = movesMadeSan,
-                modifier = Modifier.fillMaxWidth(),
-                advantage = whiteAdvantage
-            )
-            Row(
+            // Bottom Section
+            Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .align(Alignment.CenterHorizontally)
-                    .padding(top = 8.dp),
-                horizontalArrangement = Arrangement.Center
+                    .padding(bottom = 16.dp),
             ) {
-                Spacer(modifier = Modifier.weight(1f))
-                Surface(
-                    shape = CircleShape,
-                    modifier = Modifier.size(30.dp),
-                    color = Color(0xFFA26232),
-                    tonalElevation = 8.dp
+                AnalyzeGameButton(
+                    modifier = Modifier
+                        .align(Alignment.CenterHorizontally)
+                        .padding(vertical = 8.dp),
+                    text = "Analyze Game",
+                    iconRes = R.drawable.baseline_fullscreen_exit_24,
+                    onClick = { onAnalzeGame() }
+                )
+                Panel(
+                    lostPieces = blackPiecesKilled,
+                    moves = movesMadeSan,
+                    modifier = Modifier.fillMaxWidth(),
+                    advantage = whiteAdvantage
+                )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 8.dp),
+                    horizontalArrangement = Arrangement.Center
                 ) {
-                    Image(
-                        painter = painterResource(id = R.drawable.baseline_undo_24),
-                        contentDescription = "undo button",
-                        modifier = Modifier
-                            .clickable {
-                                onUndoMove()
-                            }
-                    )
+                    Spacer(modifier = Modifier.weight(1f))
+                    Surface(
+                        shape = CircleShape,
+                        modifier = Modifier.size(30.dp),
+                        color = Color(0xFFA26232),
+                        tonalElevation = 8.dp
+                    ) {
+                        Image(
+                            painter = painterResource(id = R.drawable.baseline_undo_24),
+                            contentDescription = "undo button",
+                            modifier = Modifier.clickable { onUndoMove() }
+                        )
+                    }
+                    Spacer(modifier = Modifier.weight(0.3f))
+                    Surface(
+                        shape = CircleShape,
+                        modifier = Modifier.size(30.dp),
+                        color = Color(0xFFA26232),
+                        tonalElevation = 8.dp
+                    ) {
+                        Image(
+                            painter = painterResource(id = R.drawable.baseline_redo_24),
+                            contentDescription = "redo button",
+                            modifier = Modifier.clickable { onRedoMove() }
+                        )
+                    }
+                    Spacer(modifier = Modifier.weight(1f))
                 }
-                Spacer(modifier = Modifier.weight(0.3f))
-                Surface(
-                    shape = CircleShape,
-                    modifier = Modifier.size(30.dp),
-                    color = Color(0xFFA26232),
-                    tonalElevation = 8.dp
-                ) {
-                    Image(
-                        painter = painterResource(id = R.drawable.baseline_redo_24),
-                        contentDescription = "redo button",
-                        modifier = Modifier
-                            .clickable {
-                                onRedoMove()
-                            }
-                    )
-                }
-                Spacer(modifier = Modifier.weight(1f))
             }
         }
     }
@@ -927,7 +914,7 @@ fun ExitDialog(onConfirm: () -> Unit, onDismiss: () -> Unit) {
 
 @Composable
 fun AnalyzeGameButton(
-    modifier: Modifier,
+    modifier: Modifier = Modifier,
     text: String,
     iconRes: Int,
     onClick: () -> Unit,
@@ -935,16 +922,16 @@ fun AnalyzeGameButton(
     var isHovered by remember { mutableStateOf(false) }
     val scale by animateFloatAsState(
         targetValue = if (isHovered) 1.05f else 1f,
-        animationSpec = tween(durationMillis = 200)
+        animationSpec = tween(durationMillis = 200), label = "buttonScale"
     )
     val elevation by animateDpAsState(
         targetValue = if (isHovered) 12.dp else 6.dp,
-        animationSpec = tween(durationMillis = 200)
+        animationSpec = tween(durationMillis = 200), label = "buttonElevation"
     )
 
     Card(
         modifier = modifier
-            .width(250.dp)
+            .widthIn(min = 200.dp, max = 300.dp)
             .scale(scale)
             .pointerInput(Unit) {
                 detectTapGestures(
@@ -958,22 +945,26 @@ fun AnalyzeGameButton(
     ) {
         Row(
             modifier = Modifier
-                .padding(16.dp)
+                .padding(horizontal = 20.dp, vertical = 12.dp)
                 .fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
                 text = text,
-                style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Medium),
+                style = MaterialTheme.typography.bodyLarge.copy(
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 16.sp
+                ),
                 color = Color.White
             )
-            Image(
+            Icon(
                 painter = painterResource(iconRes),
-                contentDescription = "$text Icon",
+                contentDescription = null,
                 modifier = Modifier
                     .size(24.dp)
-                    .alpha(if (isHovered) 1f else 0.7f)
+                    .alpha(if (isHovered) 1f else 0.8f),
+                tint = Color.White
             )
         }
     }
@@ -981,7 +972,7 @@ fun AnalyzeGameButton(
 
 @Composable
 fun Panel(
-    lostPieces: MutableList<ChessPiece?>,
+    lostPieces: List<ChessPiece?>,
     moves: List<SANMovePair>,
     modifier: Modifier = Modifier,
     advantage: Int

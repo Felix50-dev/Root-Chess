@@ -186,8 +186,7 @@ fun BoardAnalysisScreen(
                                         ChessSquare(
                                             square        = square,
                                             onSelectSpot  = { pos ->
-                                                boardState.board?.getBox(pos.row, pos.column)
-                                                    ?.let { spot -> chessGameViewModel.onSelectSpot(spot) }
+                                                chessGameViewModel.onSelectSpot(boardState.board.getBox(pos.row, pos.column))
                                             },
                                             onMovePieceTo = { chessGameViewModel.movePieceTo(it) },
                                             squareSize    = squareSize,

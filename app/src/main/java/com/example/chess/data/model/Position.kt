@@ -1,5 +1,8 @@
 package com.example.chess.data.model
 
+import androidx.compose.runtime.Immutable
+
+@Immutable
 data class Position(
     val row: Int,
     val column: Int

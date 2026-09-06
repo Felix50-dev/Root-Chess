@@ -21,14 +21,14 @@ data class SquareUiState(
 // Built from value fields only — never from the raw ChessPiece reference or its id,
 // since Board.clone() mints fresh piece instances (new identity) on every move.
 fun buildSquareUiStates(
-    board: Board?,
+    board: Board,
     validMoves: List<Position>,
     lastMove: Move?,
     aiLastMove: Move?,
     isInCheck: Boolean,
     checkPosition: Position,
 ): List<SquareUiState> {
-    val boxes = board?.boxes ?: return emptyList()
+    val boxes = board.boxes
     val validSet = validMoves.toHashSet()
     return boxes.flatMapIndexed { row, rowData ->
         rowData.mapIndexed { column, spot ->

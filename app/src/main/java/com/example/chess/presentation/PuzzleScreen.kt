@@ -186,8 +186,7 @@ fun PuzzleScreen(
                                 square = square,
                                 squareSize = squareSize,
                                 onSelectSpot = { position ->
-                                    boardState.board?.getBox(position.row, position.column)
-                                        ?.let { spot -> puzzleViewModel.onSelectSpot(spot) }
+                                    puzzleViewModel.onSelectSpot(boardState.board.getBox(position.row, position.column))
                                 },
                                 onMovePieceTo = { position -> puzzleViewModel.onMovePieceTo(position) },
                             )
