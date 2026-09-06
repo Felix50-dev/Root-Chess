@@ -1685,51 +1685,41 @@ class GamePlay @Inject constructor(
     }
 
 
+    // Reverses King.castlingMove()'s piece relocation on targetBoard, restoring both king
+    // and rook to their pre-castling squares. Resets the rook's hasMoved unconditionally —
+    // a rook can only ever have castled if it hadn't moved before, so this is safe for both
+    // a real committed undo and a speculative simulate/undo cycle. Shared by all three
+    // undoMove-family functions, which otherwise only differ in which Board they target.
+    private fun undoCastlingMove(move: Move, targetBoard: Board) {
+        val startSpot = move.from
+        val endSpot = move.to
+        val row = startSpot.position.row
+        val colDiff = endSpot.position.column - startSpot.position.column
+
+        val (rookStartColumn, rookEndColumn) = when (colDiff) {
+            2 -> endSpot.position.column + 1 to startSpot.position.column + 1   // king-side
+            -2 -> endSpot.position.column - 2 to endSpot.position.column + 1   // queen-side
+            else -> return
+        }
+        val rookStartSpot = targetBoard.getBox(row, rookStartColumn)
+        val rookEndSpot = targetBoard.getBox(row, rookEndColumn)
+        rookStartSpot.chessPiece = rookEndSpot.chessPiece
+        rookEndSpot.chessPiece = null
+        rookStartSpot.chessPiece?.hasMoved = false
+
+        val kingStartSpot = targetBoard.getBox(startSpot.position.row, startSpot.position.column)
+        val kingEndSpot = targetBoard.getBox(endSpot.position.row, endSpot.position.column)
+        kingStartSpot.chessPiece = kingEndSpot.chessPiece
+        kingEndSpot.chessPiece = null
+    }
+
     private fun undoMove(move: Move, myBoard: Board, player: Player) {
         val startSpot = move.from
         val endSpot = move.to
 
         // If it was a castling move, undo the castling
         if (move.isCastlingMove) {
-            // If it was a king-side castling
-            if (endSpot.position.column - startSpot.position.column == 2) {
-                // Move the rook back to its original position
-                val rookStartColumn = endSpot.position.column + 1
-                val rookEndColumn = startSpot.position.column + 1
-                val rookStartSpot = myBoard.getBox(startSpot.position.row, rookStartColumn)
-                val rookEndSpot = myBoard.getBox(startSpot.position.row, rookEndColumn)
-                rookStartSpot.chessPiece = rookEndSpot.chessPiece
-                rookEndSpot.chessPiece = null
-                // A rook can only ever have castled if it hadn't moved before — safe to
-                // restore unconditionally, real or simulated undo alike.
-                rookStartSpot.chessPiece?.hasMoved = false
-
-                //move the king back to its original position
-                val kingStartColumn = startSpot.position.column
-                val kingEndColumn = endSpot.position.column
-                val kingStartSpot = myBoard.getBox(startSpot.position.row, kingStartColumn)
-                val kingEndSpot = myBoard.getBox(endSpot.position.row, kingEndColumn)
-                kingStartSpot.chessPiece = kingEndSpot.chessPiece
-                kingEndSpot.chessPiece = null
-            }
-            // If it was a queen-side castling
-            if (endSpot.position.column - startSpot.position.column == -2) {
-                // Move the rook back to its original position
-                val rookStartColumn = endSpot.position.column - 2
-                val rookEndColumn = endSpot.position.column + 1
-                val rookStartSpot = myBoard.getBox(startSpot.position.row, rookStartColumn)
-                val rookEndSpot = myBoard.getBox(startSpot.position.row, rookEndColumn)
-                rookStartSpot.chessPiece = rookEndSpot.chessPiece
-                rookEndSpot.chessPiece = null
-                rookStartSpot.chessPiece?.hasMoved = false
-                //move the king back to its original position
-                val kingStartColumn = startSpot.position.column
-                val kingEndColumn = endSpot.position.column
-                val kingStartSpot = myBoard.getBox(startSpot.position.row, kingStartColumn)
-                val kingEndSpot = myBoard.getBox(endSpot.position.row, kingEndColumn)
-                kingStartSpot.chessPiece = kingEndSpot.chessPiece
-                kingEndSpot.chessPiece = null
-            }
+            undoCastlingMove(move, myBoard)
             //movesPlayed.remove(move)
         } else if (move.isEnPassant) {
             // Calculate the position of the captured pawn based on the end spot
@@ -1753,8 +1743,11 @@ class GamePlay @Inject constructor(
         } else {
             // Restore the piece that was moved to its original position
             startSpot.chessPiece = move.pieceMoved
-            // Restore any piece that was captured during the move
-            endSpot.chessPiece = move.pieceKilled
+            // Restore any piece that was captured during the move — isKilled must be
+            // cleared too (the en-passant branch above already does this; this plain
+            // branch previously didn't, silently leaving a live, on-board piece flagged
+            // as killed after any speculative capture simulate/undo cycle).
+            endSpot.chessPiece = move.pieceKilled?.also { it.isKilled = false }
 
             //movesPlayed.remove(move)
         }
@@ -1773,39 +1766,7 @@ class GamePlay @Inject constructor(
         val endSpot = move.to
 
         if (move.isCastlingMove) {
-            if (endSpot.position.column - startSpot.position.column == 2) {
-                val rookStartColumn = endSpot.position.column + 1
-                val rookEndColumn = startSpot.position.column + 1
-                val rookStartSpot = myBoard.getBox(startSpot.position.row, rookStartColumn)
-                val rookEndSpot = myBoard.getBox(startSpot.position.row, rookEndColumn)
-                rookStartSpot.chessPiece = rookEndSpot.chessPiece
-                rookEndSpot.chessPiece = null
-                // A rook can only ever have castled if it hadn't moved before — safe to
-                // restore unconditionally, real or simulated undo alike.
-                rookStartSpot.chessPiece?.hasMoved = false
-
-                val kingStartSpot =
-                    myBoard.getBox(startSpot.position.row, startSpot.position.column)
-                val kingEndSpot = myBoard.getBox(endSpot.position.row, endSpot.position.column)
-                kingStartSpot.chessPiece = kingEndSpot.chessPiece
-                kingEndSpot.chessPiece = null
-            }
-            if (endSpot.position.column - startSpot.position.column == -2) {
-                val rookStartColumn = endSpot.position.column - 2
-                val rookEndColumn = endSpot.position.column + 1
-                val rookStartSpot = myBoard.getBox(startSpot.position.row, rookStartColumn)
-                val rookEndSpot = myBoard.getBox(startSpot.position.row, rookEndColumn)
-                rookStartSpot.chessPiece = rookEndSpot.chessPiece
-                rookEndSpot.chessPiece = null
-                rookStartSpot.chessPiece?.hasMoved = false
-
-                val kingStartSpot =
-                    myBoard.getBox(startSpot.position.row, startSpot.position.column)
-                val kingEndSpot = myBoard.getBox(endSpot.position.row, endSpot.position.column)
-                kingStartSpot.chessPiece = kingEndSpot.chessPiece
-                kingEndSpot.chessPiece = null
-            }
-
+            undoCastlingMove(move, myBoard)
         } else if (move.isEnPassant) {
             val capturedPawnPosition = Position(startSpot.position.row, endSpot.position.column)
 
@@ -1824,7 +1785,8 @@ class GamePlay @Inject constructor(
 
         } else {
             startSpot.chessPiece = move.pieceMoved
-            endSpot.chessPiece = move.pieceKilled
+            // isKilled must be cleared on restore, same as the en-passant branch above.
+            endSpot.chessPiece = move.pieceKilled?.also { it.isKilled = false }
 
             // ✅ was `board`, now `myBoard`
             myBoard.getBox(startSpot.position.row, startSpot.position.column).chessPiece =
@@ -1846,51 +1808,7 @@ class GamePlay @Inject constructor(
 
         // If it was a castling move, undo the castling
         if (move.isCastlingMove) {
-            Log.d(TAG, "undoMove: castling undoing")
-            // If it was a king-side castling
-            if (endSpot.position.column - startSpot.position.column == 2) {
-                // Move the rook back to its original position
-                val rookStartColumn = endSpot.position.column + 1
-                val rookEndColumn = startSpot.position.column + 1
-                val rookStartSpot = board.getBox(startSpot.position.row, rookStartColumn)
-                val rookEndSpot = board.getBox(startSpot.position.row, rookEndColumn)
-                Log.d(
-                    TAG,
-                    "undoMoveByPlayer: rook startSpot/endSpot is $rookStartSpot $rookEndSpot"
-                )
-                board.getBox(startSpot.position.row, rookStartColumn).chessPiece =
-                    rookEndSpot.chessPiece
-                rookEndSpot.chessPiece = null
-                // A rook can only ever have castled if it hadn't moved before — safe to
-                // restore unconditionally, real or simulated undo alike.
-                rookStartSpot.chessPiece?.hasMoved = false
-
-                //move the king back to its original position
-                val kingStartColumn = startSpot.position.column
-                val kingEndColumn = endSpot.position.column
-                val kingStartSpot = board.getBox(startSpot.position.row, kingStartColumn)
-                val kingEndSpot = board.getBox(endSpot.position.row, kingEndColumn)
-                kingStartSpot.chessPiece = kingEndSpot.chessPiece
-                kingEndSpot.chessPiece = null
-            }
-            // If it was a queen-side castling
-            if (endSpot.position.column - startSpot.position.column == -2) {
-                // Move the rook back to its original position
-                val rookStartColumn = endSpot.position.column - 2
-                val rookEndColumn = endSpot.position.column + 1
-                val rookStartSpot = board.getBox(startSpot.position.row, rookStartColumn)
-                val rookEndSpot = board.getBox(startSpot.position.row, rookEndColumn)
-                rookStartSpot.chessPiece = rookEndSpot.chessPiece
-                rookEndSpot.chessPiece = null
-                rookStartSpot.chessPiece?.hasMoved = false
-                //move the king back to its original position
-                val kingStartColumn = startSpot.position.column
-                val kingEndColumn = endSpot.position.column
-                val kingStartSpot = board.getBox(startSpot.position.row, kingStartColumn)
-                val kingEndSpot = board.getBox(endSpot.position.row, kingEndColumn)
-                kingStartSpot.chessPiece = kingEndSpot.chessPiece
-                kingEndSpot.chessPiece = null
-            }
+            undoCastlingMove(move, board)
             if (!isReviewMode) {
                 movesUndone.add(move)
                 movesPlayed.remove(move)
@@ -1920,8 +1838,9 @@ class GamePlay @Inject constructor(
         } else {
             // Restore the piece that was moved to its original position
             startSpot.chessPiece = move.pieceMoved
-            // Restore any piece that was captured during the move
-            endSpot.chessPiece = move.pieceKilled
+            // Restore any piece that was captured during the move — isKilled must be
+            // cleared too, same as the en-passant branch above.
+            endSpot.chessPiece = move.pieceKilled?.also { it.isKilled = false }
 
             Log.d(TAG, "undoMove: piece Moved From $endSpot to $startSpot")
             if (!isReviewMode) {
