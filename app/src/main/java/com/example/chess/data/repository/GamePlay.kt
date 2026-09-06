@@ -30,6 +30,7 @@ import com.example.chess.domain.model.MoveInsight
 import com.example.chess.domain.model.InsightType
 import com.example.chess.domain.model.OpeningMatch
 import com.example.chess.domain.model.PositionEval
+import com.example.chess.domain.toMaterialDescription
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -99,6 +100,7 @@ class GamePlay @Inject constructor(
         val tactics: List<String>,
         val isWhiteMove: Boolean,
         val nonPawnMaterial: Int,
+        val hungPiece: ChessPiece?,
     )
 
     fun init(p1: Player, p2: Player, canClearMoves: Boolean) {
@@ -428,6 +430,7 @@ class GamePlay @Inject constructor(
                 category = raw.category,
                 nonPawnMaterial = raw.nonPawnMaterial,
                 openingMatch = openingMatch,
+                hungPiece = raw.hungPiece,
             )
         }
 
@@ -497,6 +500,7 @@ class GamePlay @Inject constructor(
         category: String,
         nonPawnMaterial: Int,
         openingMatch: OpeningMatch? = null,
+        hungPiece: ChessPiece? = null,
     ): MoveInsight {
 
         val evalLost = calculateLoss(evalBefore.score, evalAfter.score, moveIndex % 2 == 0)
@@ -536,9 +540,9 @@ class GamePlay @Inject constructor(
             evalLost > 250 && gamePhase != GamePhase.ENDGAME ->
                 InsightType.MATERIAL_BLUNDER to
                         buildMaterialBlunderMessage(
+                            hungPiece,
                             evalLost,
                             bestMove,
-                            evalBefore.principalVariation
                         )
 
             // Missed tactic
@@ -610,15 +614,18 @@ class GamePlay @Inject constructor(
     }
 
     private fun buildMaterialBlunderMessage(
+        hungPiece: ChessPiece?,
         evalLost: Int,
         bestMove: String,
-        bestLine: List<String>
     ): String {
-        val material = when {
-            evalLost > 800 -> "your queen"
-            evalLost > 450 -> "a rook"
-            evalLost > 280 -> "a minor piece"
-            else -> "a pawn"
+        // Name the real piece when we know it (the opponent's best reply actually
+        // captures something); otherwise don't fabricate a specific piece — the
+        // blunder might be a king-safety collapse rather than a hung piece.
+        val material = hungPiece?.toMaterialDescription() ?: when {
+            evalLost > 800 -> "significant material"
+            evalLost > 450 -> "a rook's worth of material"
+            evalLost > 280 -> "a minor piece's worth of material"
+            else -> "material"
         }
         return "This loses $material. ${bestMove.toReadable()} was needed to keep the position safe."
     }
@@ -912,6 +919,14 @@ class GamePlay @Inject constructor(
 
         applyMove(playerMoveObject, firstBoard)
 
+        // What the opponent's best reply (in the now-current, post-move position)
+        // actually captures — the real piece this move hangs, if any. Far more
+        // reliable than guessing a piece from the raw eval-loss magnitude.
+        val opponentPlayer = if (isWhiteMove) players[1] else players[0]
+        val hungPiece = if (isValidAlgebraicMove(evalAfter.bestMove)) {
+            convertToMoveObject(evalAfter.bestMove, firstBoard, opponentPlayer).pieceKilled
+        } else null
+
         return SingleMoveResult(
             category = category,
             loss = loss,
@@ -922,6 +937,7 @@ class GamePlay @Inject constructor(
             tactics = tactics,
             isWhiteMove = isWhiteMove,
             nonPawnMaterial = nonPawnMaterial,
+            hungPiece = hungPiece,
         )
     }
 
