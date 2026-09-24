@@ -3,6 +3,13 @@ import java.util.Properties
 val localProperties = Properties()
 localProperties.load(rootProject.file("local.properties").inputStream())
 
+// Device-targeted builds: -PtargetAbis=arm64-v8a (comma-separated for several) limits
+// both the packaged jniLibs and the Stockfish native build to those ABIs, shrinking the
+// APK for sideloads. Omit the property for the full 4-ABI build.
+val targetAbis = (project.findProperty("targetAbis") as? String)
+    ?.split(",")?.map { it.trim() }
+    ?: listOf("armeabi-v7a", "arm64-v8a", "x86", "x86_64")
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -22,7 +29,10 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.example.chess"
+        // TODO(owner): must match the applicationId registered in Play Console — Play
+        // rejects com.example.*; change here (namespace stays com.example.chess, no
+        // source refactor needed) before the first upload if you want a different id.
+        applicationId = "dev.rootchess.app"
         minSdk = 24
         targetSdk = 34
         versionCode = 1
@@ -34,13 +44,29 @@ android {
         }
 
         ndk {
-            abiFilters += listOf("armeabi-v7a", "arm64-v8a", "x86", "x86_64")
+            abiFilters += targetAbis
         }
 
         buildConfigField(
             "String",
             "GROQ_API_KEY",
             "\"${localProperties["GROQ_API_KEY"]}\""
+        )
+
+        // RevenueCat public Play API key (goog_...). Blank = billing disabled; the app
+        // still builds and runs free-tier.
+        buildConfigField(
+            "String",
+            "REVENUECAT_API_KEY",
+            "\"${localProperties["REVENUECAT_API_KEY"] ?: ""}\""
+        )
+
+        // SIMULATE_PREMIUM=true in local.properties fakes an active premium entitlement
+        // (debug builds only — ChessApplication gates it on BuildConfig.DEBUG).
+        buildConfigField(
+            "boolean",
+            "SIMULATE_PREMIUM",
+            (localProperties["SIMULATE_PREMIUM"]?.toString() ?: "false")
         )
 
         externalNativeBuild {
@@ -51,13 +77,35 @@ android {
         }
     }
 
+    signingConfigs {
+        // Keystore details live in local.properties (never committed):
+        //   RELEASE_STORE_FILE=C:/path/to/upload-keystore.jks
+        //   RELEASE_STORE_PASSWORD=...
+        //   RELEASE_KEY_ALIAS=...
+        //   RELEASE_KEY_PASSWORD=...
+        create("release") {
+            val storePath = localProperties["RELEASE_STORE_FILE"]?.toString()
+            if (storePath != null) {
+                storeFile = file(storePath)
+                storePassword = localProperties["RELEASE_STORE_PASSWORD"]?.toString()
+                keyAlias = localProperties["RELEASE_KEY_ALIAS"]?.toString()
+                keyPassword = localProperties["RELEASE_KEY_PASSWORD"]?.toString()
+            }
+        }
+    }
+
     buildTypes {
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            // No keystore configured (CI, fresh checkout) → fall back to debug signing
+            // so assembleRelease still builds; a Play upload requires the real keystore.
+            signingConfig = if (localProperties["RELEASE_STORE_FILE"] != null)
+                signingConfigs.getByName("release") else signingConfigs.getByName("debug")
         }
     }
     compileOptions {
@@ -83,48 +131,69 @@ android {
         }
     }
 
+    testOptions {
+        // GamePlay logs via android.util.Log on nearly every step — let JVM unit tests
+        // run through it with Log.* returning defaults instead of throwing "not mocked".
+        unitTests.isReturnDefaultValues = true
+    }
+
     sourceSets {
         getByName("main").jniLibs.srcDir("libs")  // Directory for native .so files
         // AGP only auto-packages add_library(SHARED) outputs, not the add_executable(chess)
         // Stockfish binary CMakeLists.txt builds — see packageChessNativeExecutables below.
-        getByName("main").jniLibs.srcDir(layout.buildDirectory.dir("generated/jniLibs"))
+        // Variant-specific dirs so debug and release each package their own build of the
+        // binary (previously only debug was packaged; release shipped WITHOUT Stockfish).
+        getByName("debug").jniLibs.srcDir(layout.buildDirectory.dir("generated/jniLibs/Debug"))
+        getByName("release").jniLibs.srcDir(layout.buildDirectory.dir("generated/jniLibs/Release"))
     }
 }
 
-val chessAbis = listOf("armeabi-v7a", "arm64-v8a", "x86", "x86_64")
+val chessAbis = targetAbis
 
 // Copies the CMake-built 'chess' (Stockfish) executable for each ABI into a generated
 // jniLibs dir as lib_chess.so. AGP only auto-packages add_library(SHARED) outputs, not
-// add_executable outputs, so this step is required for every ABI — previously done
-// manually and committed to git for only 2 of the 4 ABIs (and had already gone stale).
-val packageChessNativeExecutables = tasks.register("packageChessNativeExecutables") {
-    // AGP 8.x uses externalNativeBuildDebug to build all ABIs for the debug variant
-    dependsOn("externalNativeBuildDebug")
+// add_executable outputs, so this step is required for every ABI and EVERY variant —
+// the original debug-only task meant release builds shipped without Stockfish at all.
+// cmakeTypes: AGP names the native build type Debug for debug variants, but Release or
+// RelWithDebInfo (AGP-version-dependent) for release — match both.
+fun registerPackageChessTask(variant: String, cmakeTypes: List<String>) =
+    tasks.register("packageChessNativeExecutables$variant") {
+        dependsOn("externalNativeBuild$variant")
 
-    val outputDir = layout.buildDirectory.dir("generated/jniLibs")
-    outputs.dir(outputDir)
+        val outputDir = layout.buildDirectory.dir("generated/jniLibs/$variant")
+        outputs.dir(outputDir)
 
-    doLast {
-        chessAbis.forEach { abi ->
-            val built = fileTree(layout.buildDirectory.dir("intermediates/cxx")) {
-                include("**/Debug/**/obj/$abi/chess")
-            }.singleFile
-            val dest = outputDir.get().dir(abi).asFile.also { it.mkdirs() }
-            built.copyTo(File(dest, "lib_chess.so"), overwrite = true)
+        doLast {
+            chessAbis.forEach { abi ->
+                val built = fileTree(layout.buildDirectory.dir("intermediates/cxx")) {
+                    include(cmakeTypes.map { "**/$it/**/obj/$abi/chess" })
+                }.files.maxByOrNull { it.lastModified() }
+                    ?: error("No built 'chess' binary found for $abi ($variant)")
+                val dest = outputDir.get().dir(abi).asFile.also { it.mkdirs() }
+                built.copyTo(File(dest, "lib_chess.so"), overwrite = true)
+            }
         }
     }
-}
 
-// Hooked into mergeDebugJniLibFolders (the task that actually reads the jniLibs source
+val packageChessDebug = registerPackageChessTask("Debug", listOf("Debug"))
+val packageChessRelease = registerPackageChessTask("Release", listOf("Release", "RelWithDebInfo"))
+
+// Hooked into merge<Variant>JniLibFolders (the task that actually reads the jniLibs source
 // set directories), not preBuild — the CMake tasks themselves depend on preBuild via
-// preDebugBuild, so depending on this task from preBuild would create a circular
+// pre<Variant>Build, so depending on this task from preBuild would create a circular
 // dependency. AGP registers its variant tasks lazily, so match-and-configure rather
 // than tasks.named(...), which would fail if evaluated before the task exists.
 tasks.matching { it.name == "mergeDebugJniLibFolders" }.configureEach {
-    dependsOn(packageChessNativeExecutables)
+    dependsOn(packageChessDebug)
+}
+tasks.matching { it.name == "mergeReleaseJniLibFolders" }.configureEach {
+    dependsOn(packageChessRelease)
 }
 
 dependencies {
+
+    implementation(project(":payments"))
+    implementation("androidx.datastore:datastore-preferences:1.1.1")
 
     implementation("androidx.core:core-ktx:1.15.0")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
@@ -161,6 +230,9 @@ dependencies {
 
     testImplementation ("junit:junit:4.13.2")
     testImplementation("org.mockito:mockito-core:5.2.0")
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.8.1")
+    // PreferenceDataStoreFactory on the JVM for AiReviewQuotaManager tests
+    testImplementation("androidx.datastore:datastore-preferences-core:1.1.1")
     implementation(fileTree("libs") {
         include("*.jar", "*.so")
     })

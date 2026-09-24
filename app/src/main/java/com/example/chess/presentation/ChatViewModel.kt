@@ -8,6 +8,7 @@ import com.example.chess.data.remote.GroqApiException
 import com.example.chess.data.repository.ChatRepository
 import com.example.chess.domain.model.ChatMessage
 import com.example.chess.domain.model.ChatRole
+import com.example.chess.payments.domain.repository.EntitlementRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -28,7 +29,12 @@ private const val SEND_TIMEOUT_MS = 15_000L
 @HiltViewModel
 class ChatViewModel @Inject constructor(
     private val chatRepository: ChatRepository,
+    private val entitlements: EntitlementRepository,
 ) : ViewModel() {
+
+    // The nav graph gates the whole chat route on this (paywall renders instead);
+    // exposed from the VM so the gate flips reactively the moment a purchase lands.
+    val isPremium: StateFlow<Boolean> = entitlements.isPremium
 
     private val _messages = MutableStateFlow<List<ChatMessage>>(emptyList())
     val messages: StateFlow<List<ChatMessage>> = _messages.asStateFlow()
@@ -54,6 +60,9 @@ class ChatViewModel @Inject constructor(
     }
 
     fun sendMessage(analysisResult: AnalysisResult?) {
+        // Belt-and-braces behind the nav-level gate: chat is premium-only and every
+        // message costs an API call.
+        if (!entitlements.isPremium.value) return
         val text = _inputText.value.trim()
         if (text.isEmpty() || _isSending.value || _chatDisabled.value) return
 
