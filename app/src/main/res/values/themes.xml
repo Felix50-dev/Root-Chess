@@ -1,4 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.Chess" parent="android:Theme.Material.Light.NoActionBar" />
+    <style name="Theme.Chess" parent="android:Theme.Material.Light.NoActionBar">
+        <!-- Matches the Compose theme's light background so the pre-Compose window
+             doesn't flash a mismatched color on cold start. -->
+        <item name="android:windowBackground">@color/brand_cream</item>
+    </style>
 </resources>

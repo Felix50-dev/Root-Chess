@@ -79,17 +79,21 @@ import com.example.chess.data.model.Feedback
 import com.example.chess.domain.model.GameSummary
 import com.example.chess.domain.model.MoveInsight
 import com.example.chess.presentation.model.buildSquareUiStates
+import com.example.chess.ui.theme.LightChessColors
 
 // ── Design tokens ─────────────────────────────────────────────────────────────
 
-private val ColorOak         = Color(0xFFA26232)
-private val ColorWhiteSquare = Color(0xFFF0D9B5)
+// Sourced from the theme's board token (deliberately identical in light and dark mode),
+// kept as a top-level val because the eval graph reads it inside Canvas draw lambdas
+// where composable CompositionLocal reads aren't available.
+private val ColorWhiteSquare = LightChessColors.boardLight
 private val ColorBlunder     = Color(0xFFE24B4A)
 
 @Composable
 fun BoardAnalysisScreen(
     chessGameViewModel: ChessGameViewModel,
     onBack: () -> Unit,
+    onGoPremium: () -> Unit = {},
 ) {
     val boardState         by chessGameViewModel.boardState.collectAsStateWithLifecycle()
     val lastMove           by chessGameViewModel.lastMove.collectAsStateWithLifecycle()
@@ -104,6 +108,7 @@ fun BoardAnalysisScreen(
     val visualPieces       by chessGameViewModel.visualPieces.collectAsStateWithLifecycle()
     val explanationLoading by chessGameViewModel.explanationLoading.collectAsStateWithLifecycle()
     val aiExplanationDisabled by chessGameViewModel.aiExplanationDisabled.collectAsStateWithLifecycle()
+    val aiQuotaExhausted   by chessGameViewModel.aiQuotaExhausted.collectAsStateWithLifecycle()
     val analysisResult     by chessGameViewModel.analysisResult.collectAsStateWithLifecycle()
     val currentMoveIndex   by chessGameViewModel.currentMoveIndex.collectAsStateWithLifecycle()
     val currentInsight     by chessGameViewModel.currentInsight.collectAsStateWithLifecycle()
@@ -242,6 +247,8 @@ fun BoardAnalysisScreen(
                         insight      = currentInsight,
                         isLoading    = explanationLoading,
                         aiUnavailable = aiExplanationDisabled,
+                        quotaExhausted = aiQuotaExhausted,
+                        onGoPremium  = onGoPremium,
                         modifier     = Modifier
                             .fillMaxWidth()
                             .padding(horizontal = 12.dp, vertical = 4.dp),
@@ -412,7 +419,7 @@ private fun ReviewControls(
     onCycleSpeed: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val accent = currentCategory?.let { categoryColor(it) } ?: ColorOak
+    val accent = currentCategory?.let { categoryColor(it) } ?: MaterialTheme.colorScheme.primary
 
     Surface(
         modifier       = modifier,
@@ -746,6 +753,8 @@ fun EvalGraph(
         EvalGraphStatics(path, whiteFill, blackFill, blunderDots, xStep, mid, h)
     }
 
+    // Hoisted: colorScheme can't be read inside the Canvas draw lambda.
+    val currentMoveMarkerColor = MaterialTheme.colorScheme.primary
     Box(modifier = modifier.onSizeChanged { canvasSize = it }) {
         Canvas(modifier = Modifier.fillMaxSize()) {
             val s = statics ?: return@Canvas
@@ -793,7 +802,7 @@ fun EvalGraph(
             if (currentIndex > 0 && currentIndex <= clampedEvals.size) {
                 val curX = (currentIndex - 1) * s.xStep
                 drawLine(
-                    color       = ColorOak.copy(alpha = 0.7f),
+                    color       = currentMoveMarkerColor.copy(alpha = 0.7f),
                     start       = Offset(curX, 0f),
                     end         = Offset(curX, s.height),
                     strokeWidth = 1.5.dp.toPx(),
@@ -811,6 +820,8 @@ fun MoveFeedbackCard(
     insight: MoveInsight?,
     isLoading: Boolean,
     aiUnavailable: Boolean = false,
+    quotaExhausted: Boolean = false,
+    onGoPremium: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val accent = categoryColor(feedback.type)
@@ -947,6 +958,23 @@ fun MoveFeedbackCard(
                         style = MaterialTheme.typography.labelSmall,
                     )
                 }
+                if (quotaExhausted && !aiUnavailable) {
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(accent.copy(alpha = 0.12f))
+                            .clickable(onClick = onGoPremium)
+                            .padding(horizontal = 10.dp, vertical = 6.dp),
+                    ) {
+                        Text(
+                            text       = "AI explanations used for today — Go Premium",
+                            color      = accent,
+                            style      = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                    }
+                }
             }
 
             insight?.bestContinuation
@@ -1014,7 +1042,7 @@ fun GameSummaryCard(
                 modifier          = Modifier
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(10.dp))
-                    .background(ColorOak.copy(alpha = 0.10f))
+                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.10f))
                     .padding(12.dp),
                 verticalAlignment = Alignment.Top,
             ) {
@@ -1023,7 +1051,7 @@ fun GameSummaryCard(
                 Column {
                     Text(
                         text       = "Coach tip",
-                        color      = ColorOak,
+                        color      = MaterialTheme.colorScheme.primary,
                         style      = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.SemiBold,
                     )

@@ -1,23 +1,23 @@
 package com.example.chess.presentation
 
+import android.content.res.Configuration
 import androidx.activity.compose.BackHandler
-import androidx.compose.animation.core.animateDpAsState
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.tween
-import androidx.compose.foundation.Image
-import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Extension
+import androidx.compose.material.icons.filled.Group
+import androidx.compose.material.icons.filled.SmartToy
+import androidx.compose.material.icons.outlined.Psychology
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -28,18 +28,11 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
-import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
@@ -50,7 +43,7 @@ import com.airbnb.lottie.compose.LottieConstants
 import com.airbnb.lottie.compose.animateLottieCompositionAsState
 import com.airbnb.lottie.compose.rememberLottieComposition
 import com.example.chess.R
-
+import com.example.chess.ui.theme.ChessTheme
 
 @Composable
 fun HomeScreen(
@@ -67,61 +60,50 @@ fun HomeScreen(
         topBar = { TopAppBar(text = "Root Chess") },
         modifier = modifier.fillMaxSize()
     ) { paddingValues ->
-        Box(
+        Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(paddingValues)
+                .padding(horizontal = 24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterVertically)
         ) {
-
             val composition by rememberLottieComposition(LottieCompositionSpec.RawRes(R.raw.computer_knight))
             val progress by animateLottieCompositionAsState(
                 composition = composition,
-                iterations = LottieConstants.IterateForever // Loop indefinitely
+                iterations = LottieConstants.IterateForever
             )
-
             LottieAnimation(
                 composition = composition,
                 progress = { progress },
                 modifier = Modifier
-                    .size(250.dp) // Adjust size as needed
-                    .align(Alignment.TopCenter)
-                    .padding(top = 16.dp) // Space below TopAppBar
+                    .size(200.dp)
+                    .padding(top = 8.dp)
             )
 
-            // Button Cards
-            Column(
-                modifier = Modifier
-                    .align(Alignment.Center)
-                    .fillMaxWidth()
-                    .padding(horizontal = 32.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                AnimatedCardButton(
-                    text = "Play with a Friend",
-                    iconRes = R.drawable.knight_white,
-                    onClick = onPlayWithFriend,
-                    containerColor = Color(0xFFA26232)
-                )
-                AnimatedCardButton(
-                    text = "Play with Computer",
-                    iconRes = R.drawable.rook_dark,
-                    onClick = onPlayWithComputer,
-                    containerColor = Color(0xFFA26232)
-                )
-                AnimatedCardButton(
-                    text = "Puzzles",
-                    iconRes = R.drawable.bishop_white,
-                    onClick = onOpenPuzzles,
-                    containerColor = Color(0xFFA26232)
-                )
-                AnimatedCardButton(
-                    text = "AI Coach",
-                    iconRes = R.drawable.queen_white,
-                    onClick = onOpenChat,
-                    containerColor = Color(0xFFA26232)
-                )
-            }
+            // Hero: the primary action gets the only primary-colored, largest card —
+            // the rest are quieter tonal rows (size/containment hierarchy).
+            HeroActionCard(
+                title = "Play with Computer",
+                subtitle = "Challenge the engine",
+                icon = Icons.Filled.SmartToy,
+                onClick = onPlayWithComputer
+            )
+            HomeActionCard(
+                title = "Play with a Friend",
+                icon = Icons.Filled.Group,
+                onClick = onPlayWithFriend
+            )
+            HomeActionCard(
+                title = "Puzzles",
+                icon = Icons.Filled.Extension,
+                onClick = onOpenPuzzles
+            )
+            HomeActionCard(
+                title = "AI Coach",
+                icon = Icons.Outlined.Psychology,
+                onClick = onOpenChat
+            )
         }
     }
 }
@@ -151,55 +133,86 @@ fun TopAppBar(text: String, onBack: (() -> Unit)? = null) {
     )
 }
 
+// Large primary-container card for the single most important action on the screen.
+// Card(onClick) supplies proper M3 ripple + press feedback (the old hand-rolled
+// AnimatedCardButton had a desktop hover idiom and no ripple at all).
 @Composable
-fun AnimatedCardButton(
-    text: String,
-    iconRes: Int,
+private fun HeroActionCard(
+    title: String,
+    subtitle: String,
+    icon: ImageVector,
     onClick: () -> Unit,
-    containerColor: Color
 ) {
-    var isHovered by remember { mutableStateOf(false) }
-    val scale by animateFloatAsState(
-        targetValue = if (isHovered) 1.05f else 1f,
-        animationSpec = tween(durationMillis = 200)
-    )
-    val elevation by animateDpAsState(
-        targetValue = if (isHovered) 12.dp else 6.dp,
-        animationSpec = tween(durationMillis = 200)
-    )
-
     Card(
-        modifier = Modifier
-            .width(250.dp)
-            .scale(scale)
-            .pointerInput(Unit) {
-                detectTapGestures(
-                    onPress = { isHovered = true },
-                    onTap = { onClick(); isHovered = false }
-                )
-            },
-        shape = RoundedCornerShape(12.dp),
-        elevation = CardDefaults.cardElevation(defaultElevation = elevation),
-        colors = CardDefaults.cardColors(containerColor = containerColor.copy(alpha = 0.9f))
+        onClick = onClick,
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.primary,
+            contentColor = MaterialTheme.colorScheme.onPrimary
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
     ) {
         Row(
             modifier = Modifier
-                .padding(16.dp)
-                .fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
+                .fillMaxWidth()
+                .padding(20.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(
-                text = text,
-                style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Medium),
-                color = Color.White
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                modifier = Modifier.size(32.dp)
             )
-            Image(
-                painter = painterResource(iconRes),
-                contentDescription = "$text Icon",
-                modifier = Modifier
-                    .size(24.dp)
-                    .alpha(if (isHovered) 1f else 0.7f)
+            Spacer(modifier = Modifier.width(16.dp))
+            Column {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    text = subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.85f)
+                )
+            }
+        }
+    }
+}
+
+// Quiet tonal row card for secondary destinations.
+@Composable
+private fun HomeActionCard(
+    title: String,
+    icon: ImageVector,
+    onClick: () -> Unit,
+) {
+    Card(
+        onClick = onClick,
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 56.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.secondaryContainer,
+            contentColor = MaterialTheme.colorScheme.onSecondaryContainer
+        )
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = 56.dp)
+                .padding(horizontal = 16.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                modifier = Modifier.size(24.dp)
+            )
+            Spacer(modifier = Modifier.width(16.dp))
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleMedium
             )
         }
     }
@@ -208,11 +221,27 @@ fun AnimatedCardButton(
 @Preview
 @Composable
 fun HomeScreenPreview() {
-    HomeScreen(
-        onPlayWithFriend = {},
-        onPlayWithComputer = {},
-        onOpenPuzzles = {},
-        onOpenChat = {},
-        onBackPressed = {}
-    )
+    ChessTheme {
+        HomeScreen(
+            onPlayWithFriend = {},
+            onPlayWithComputer = {},
+            onOpenPuzzles = {},
+            onOpenChat = {},
+            onBackPressed = {}
+        )
+    }
+}
+
+@Preview(uiMode = Configuration.UI_MODE_NIGHT_YES)
+@Composable
+fun HomeScreenDarkPreview() {
+    ChessTheme(darkTheme = true) {
+        HomeScreen(
+            onPlayWithFriend = {},
+            onPlayWithComputer = {},
+            onOpenPuzzles = {},
+            onOpenChat = {},
+            onBackPressed = {}
+        )
+    }
 }

@@ -164,11 +164,11 @@ private fun ErrorBanner(text: String) {
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 16.dp, vertical = 4.dp)
-            .background(Color(0xFFC62828).copy(alpha = 0.15f), shape = RoundedCornerShape(8.dp))
+            .background(MaterialTheme.colorScheme.errorContainer, shape = RoundedCornerShape(8.dp))
             .padding(12.dp),
         contentAlignment = Alignment.Center,
     ) {
-        Text(text, color = Color(0xFFC62828), fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
+        Text(text, color = MaterialTheme.colorScheme.onErrorContainer, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
     }
 }
 

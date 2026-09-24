@@ -24,6 +24,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import com.example.chess.ui.theme.ChessTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
@@ -114,7 +115,7 @@ private fun PuzzleListRow(puzzle: PuzzleEntity, onClick: () -> Unit) {
                 )
             }
             if (puzzle.solved) {
-                Text("Solved", color = Color(0xFF2E7D32))
+                Text("Solved", color = ChessTheme.colors.success)
             }
         }
     }
@@ -159,8 +160,8 @@ fun PuzzleScreen(
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             when (feedback) {
-                PuzzleFeedback.CORRECT -> FeedbackBanner("Correct!", Color(0xFF2E7D32))
-                PuzzleFeedback.INCORRECT -> FeedbackBanner("Not quite — try again.", Color(0xFFC62828))
+                PuzzleFeedback.CORRECT -> FeedbackBanner("Correct!", ChessTheme.colors.success)
+                PuzzleFeedback.INCORRECT -> FeedbackBanner("Not quite — try again.", MaterialTheme.colorScheme.error)
                 PuzzleFeedback.NONE -> Spacer(modifier = Modifier.height(0.dp))
             }
 
@@ -224,7 +225,7 @@ private fun PuzzleSquare(
     onSelectSpot: (Position) -> Unit,
     onMovePieceTo: (Position) -> Unit,
 ) {
-    val backgroundColor = if (square.isWhite) Color.White else Color(0xFFA26232)
+    val backgroundColor = if (square.isWhite) ChessTheme.colors.boardLight else ChessTheme.colors.boardDark
 
     Box(
         modifier = Modifier
@@ -251,14 +252,14 @@ private fun PuzzleSquare(
             Box(
                 modifier = Modifier
                     .size(12.dp)
-                    .background(color = Color(0x8800C853), shape = CircleShape)
+                    .background(color = ChessTheme.colors.boardLegalDot, shape = CircleShape)
             )
         }
         if (square.isCapturableTarget) {
             Box(
                 modifier = Modifier
                     .matchParentSize()
-                    .border(width = 3.dp, color = Color(0xFFFFB300), shape = CircleShape)
+                    .border(width = 3.dp, color = ChessTheme.colors.boardSelected, shape = CircleShape)
                     .padding(2.dp)
             )
         }

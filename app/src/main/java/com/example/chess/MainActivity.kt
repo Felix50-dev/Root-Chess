@@ -1,9 +1,7 @@
 package com.example.chess
 
-import android.graphics.Color
 import android.os.Bundle
 import androidx.activity.ComponentActivity
-import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.fillMaxSize
@@ -25,10 +23,9 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
 
-        enableEdgeToEdge(
-            statusBarStyle = SystemBarStyle.light(Color.TRANSPARENT, Color.TRANSPARENT),
-            navigationBarStyle = SystemBarStyle.light(Color.TRANSPARENT, Color.TRANSPARENT)
-        )
+        // No-arg default is SystemBarStyle.auto: bar icons follow uiMode (light icons in
+        // dark theme), which the old forced-.light() styles broke.
+        enableEdgeToEdge()
         super.onCreate(savedInstanceState)
         setContent {
             ChessTheme {

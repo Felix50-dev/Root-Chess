@@ -27,6 +27,9 @@ import com.example.chess.data.remote.GroqApiException
 import com.example.chess.data.repository.GamePlay
 import com.example.chess.data.repository.GameSummaryGenerator
 import com.example.chess.data.repository.MoveExplainer
+import com.example.chess.domain.AiExplanationGate
+import com.example.chess.domain.GateResult
+import com.example.chess.domain.model.DetectedTactic
 import com.example.chess.domain.model.GameSummary
 import com.example.chess.domain.model.GameSummaryRequest
 import com.example.chess.domain.model.MoveExplanationRequest
@@ -55,6 +58,7 @@ class ChessGameViewModel @Inject constructor(
     private val moveExplainer: MoveExplainer,
     private val gameSummaryGenerator: GameSummaryGenerator,
     private val puzzleDao: PuzzleDao,
+    private val aiExplanationGate: AiExplanationGate,
     @ApplicationContext context: Context
 ) : ViewModel() {
 
@@ -67,6 +71,15 @@ class ChessGameViewModel @Inject constructor(
     // Add loading state for explanation
     private val _explanationLoading = MutableStateFlow(false)
     val explanationLoading: StateFlow<Boolean> = _explanationLoading.asStateFlow()
+
+    // Free tier: today's AI-review slot is claimed by a different game — the review
+    // screen shows an upsell chip instead of AI text.
+    private val _aiQuotaExhausted = MutableStateFlow(false)
+    val aiQuotaExhausted: StateFlow<Boolean> = _aiQuotaExhausted.asStateFlow()
+
+    // Identifies the game under review for the daily quota: same move list = same game,
+    // stable across re-entries into review mode.
+    private var reviewGameKey: String = ""
 
     private val _aiLastMove = MutableStateFlow<Move?>(null)
     val aiLastMove: StateFlow<Move?> = _aiLastMove.asStateFlow()
@@ -172,6 +185,15 @@ class ChessGameViewModel @Inject constructor(
     // cancels the previous one instead of letting concurrent Groq calls pile up.
     private var explanationJob: Job? = null
 
+    // Null-move threat-probe results per move index (viewModelScope-confined), so
+    // revisiting a flagged move never re-runs its engine searches. Written only on
+    // successful completion — a cancelled probe simply re-runs on the next visit.
+    private val threatFactsCache = mutableMapOf<Int, List<String>>()
+
+    // Categories worth probing for threats — the flagged tiers plus the two overrides,
+    // exactly as categorizeByLoss/analyzeSingleMove label them.
+    private val threatProbeCategories = setOf("Blunder", "Mistake", "Miss", "MissedMate")
+
     // Set once a Groq call fails with a quota/rate-limit error (HTTP 429), so we stop
     // firing a doomed network request (and its CPU/IO cost) on every remaining move step
     // for the rest of this session. Exposed publicly so the UI can tell the user AI
@@ -267,7 +289,7 @@ class ChessGameViewModel @Inject constructor(
         chessPiece: String,
         numOfMoves: Int? = 0,
         matingPiece: ChessPiece?,
-        tactic: List<String>? = null
+        tactic: List<DetectedTactic>? = null
     ): String {
         Log.d(TAG, "generateExplanation: move category is $type")
         return when (type) {
@@ -283,7 +305,7 @@ class ChessGameViewModel @Inject constructor(
 
             "Mistake" -> "This move weakens your position. Better was $bestMove."
             "Blunder" -> "This move loses material or position. Better was $bestMove."
-            "Brilliant" -> "This move is exceptionally good, a $tactic in chess."
+            "Brilliant" -> "This move is exceptionally good, a ${tactic?.firstOrNull()?.name ?: "strong tactic"} in chess."
             "Fork" -> "This move attacks two or more valuable enemy pieces at once — a fork!"
             "Pin" -> "This move pins an enemy piece to a more valuable one, such as their king or queen."
             "Discovered Attack" -> "This move reveals an attack by another piece — a powerful discovered tactic!"
@@ -301,7 +323,7 @@ class ChessGameViewModel @Inject constructor(
         chessPiece: String,
         mateIn: Int?,
         matingPiece: ChessPiece?,
-        tactic: List<String>? = null
+        tactic: List<DetectedTactic>? = null
     ): Feedback {
         val explanation =
             generateExplanation(category, bestMove, chessPiece, mateIn, matingPiece, tactic)
@@ -430,6 +452,7 @@ class ChessGameViewModel @Inject constructor(
                 )
                 analysisSessionId++
                 val sessionId = analysisSessionId
+                threatFactsCache.clear()
                 _analysisResult.value = result
                 _gameSummary.value = result.gameSummary
                 savePuzzlesFromBlunders(result.insights)
@@ -734,6 +757,9 @@ class ChessGameViewModel @Inject constructor(
         val movesSnapshot = movesPlayedSnapshot()
         _movesToSimulate = movesSnapshot
         _movesToSimulateSAN = game.convertMovesToNotation(movesSnapshot)
+        reviewGameKey = _movesToSimulateSAN.joinToString("|")
+        threatFactsCache.clear()
+        _aiQuotaExhausted.value = false
         Log.d(TAG, "reviewGame: movesToSimulateSAN are $_movesToSimulateSAN")
         val updatedWhitePlayer = playerWhite.copy(playerType = PlayerType.HUMAN)
         val updatedDarkPlayer = playerDark.copy(playerType = PlayerType.HUMAN)
@@ -811,7 +837,7 @@ class ChessGameViewModel @Inject constructor(
                 bestMove else null
         )
 
-        insight?.let { launchAiExplanation(it, sanMove, index) }
+        insight?.let { launchAiExplanation(it, sanMove, index, expectedMoveIndex = index + 1) }
 
         _currentMoveIndex.value = index + 1
         _currentMoveCategory.value = category
@@ -859,7 +885,7 @@ class ChessGameViewModel @Inject constructor(
                 insight?.bestMove else null
         )
 
-        insight?.let { launchAiExplanation(it, sanMove, prevIndex) }
+        insight?.let { launchAiExplanation(it, sanMove, prevIndex, expectedMoveIndex = prevIndex) }
 
         _boardState.value = _boardState.value.copy(
             board = game.board.clone(),
@@ -873,27 +899,57 @@ class ChessGameViewModel @Inject constructor(
         insight: MoveInsight,
         sanMove: String,
         index: Int,
+        // The _currentMoveIndex value this explanation belongs to. Forward navigation sets
+        // _currentMoveIndex to index + 1 AFTER launching; backward navigation sets it to
+        // index BEFORE launching — so it cannot be derived from `index` here.
+        expectedMoveIndex: Int,
     ) {
         if (_aiExplanationDisabled.value) return
         explanationJob?.cancel()
         explanationJob = viewModelScope.launch {
+            // Free tier: one AI-explained game per day. Checked inside the coroutine
+            // (it suspends on DataStore); premium bypasses the quota entirely.
+            when (aiExplanationGate.check(reviewGameKey)) {
+                GateResult.QUOTA_EXHAUSTED -> {
+                    _aiQuotaExhausted.value = true
+                    return@launch
+                }
+                GateResult.ALLOWED -> _aiQuotaExhausted.value = false
+            }
             _explanationLoading.value = true
             try {
+                // Null-move threat probe for flagged moves: ≤2 short engine searches,
+                // cached per index. Runs before the request so MoveExplainer's
+                // prompt-keyed cache stays correct automatically.
+                val probeFacts = if (insight.category in threatProbeCategories) {
+                    threatFactsCache[index] ?: game.threatProbeFacts(
+                        _movesToSimulateSAN,
+                        index,
+                        insight.evalBefore,
+                        insight.bestMove,
+                        insight.opponentReplyUci,
+                    ).also { threatFactsCache[index] = it }
+                } else emptyList()
                 val request = MoveExplanationRequest(
                     type = insight.category,
                     movePlayed = sanMove,
                     bestMove = insight.bestMove,
                     chessPiece = _analysisResult.value?.captureOpportunity
                         ?.getOrNull(index)?.target?.toString(),
-                    evalDelta = insight.evalLost.toFloat(),
+                    // evalLost is centipawns with positive = loss; the prompt's evalDelta
+                    // is pawns with negative = loss (MoveExplainer's severity thresholds
+                    // and "Eval change: X pawns" line both assume that convention).
+                    evalDelta = -insight.evalLost / 100f,
                     tactic = _analysisResult.value?.tactics?.getOrNull(index),
                     mateIn = _analysisResult.value?.missedMates
                         ?.getOrNull(index)?.mateInBefore,
                     matingPiece = _analysisResult.value?.missedMates
                         ?.getOrNull(index)?.moveObject?.pieceMoved?.toString(),
-                    facts = game.explanationFacts(_movesToSimulateSAN, index, insight.hungPieceSquare),
+                    allowedMateIn = insight.allowedMateIn,
+                    facts = game.explanationFacts(_movesToSimulateSAN, index, insight.hungPieceSquare, insight.bestMove) + probeFacts,
                     playerElo = 1200,
-                    moveNumber = index + 1,
+                    // Full-move number (White+Black share one); color is carried separately.
+                    moveNumber = index / 2 + 1,
                     playerColor = if (index % 2 == 0) "White" else "Black",
                 )
                 // 15s matches GroqApi's own connect/read timeouts — this call is
@@ -904,8 +960,10 @@ class ChessGameViewModel @Inject constructor(
                 val aiExplanation = withTimeout(15_000) {
                     moveExplainer.explain(request)
                 }
-                // Only update if still on the same move
-                if (_currentMoveIndex.value == index + 1) {
+                // Only update if still on the same move; a blank explanation would wipe
+                // the deterministic insight already on screen (explain() also rejects
+                // blanks, but keep this belt-and-braces).
+                if (_currentMoveIndex.value == expectedMoveIndex && aiExplanation.isNotBlank()) {
                     _feedback.value = _feedback.value?.copy(
                         explanation = aiExplanation
                     )
@@ -932,8 +990,18 @@ class ChessGameViewModel @Inject constructor(
         gameSummaryJob?.cancel()
         gameSummaryJob = viewModelScope.launch {
             try {
-                val pgn = buildPGN(game.convertMovesToNotation(movesPlayedSnapshot()))
+                val uciMoves = game.convertMovesToNotation(movesPlayedSnapshot())
+                val pgn = buildPGN(uciMoves)
+                // Render the critical-move continuation with piece names — raw UCI in the
+                // summary prompt led the LLM to invent moves when "decoding" it.
                 val request = GameSummaryRequest.fromAnalysisResult(result, pgn, playerElo = 1200)
+                    ?.let { req ->
+                        req.copy(
+                            criticalMoveBestContinuation = game.describeContinuation(
+                                uciMoves, req.criticalMoveIndex, req.criticalMoveBestContinuation,
+                            ),
+                        )
+                    }
                     ?: return@launch
                 val generated = withTimeout(15_000) {
                     gameSummaryGenerator.generate(request)

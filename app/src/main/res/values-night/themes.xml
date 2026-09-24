@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.Chess" parent="android:Theme.Material.NoActionBar">
+        <!-- Dark variant: kills the white window flash before Compose attaches when
+             the system is in dark mode. Matches DarkBackground in ui/theme/Color.kt. -->
+        <item name="android:windowBackground">@color/brand_dark</item>
+    </style>
+</resources>

@@ -60,9 +60,6 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
-// ── Color tokens ─────────────────────────────────────────────────────────────
-private val ChessOak        = Color(0xFFA26232)
-
 private data class MoveCategory(
     val label: String,
     val color: Color,
@@ -572,7 +569,7 @@ private fun AnalysisButton(
             .fillMaxWidth()
             .height(52.dp)
             .clip(RoundedCornerShape(14.dp))
-            .background(ChessOak.copy(alpha = 0.25f))
+            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.25f))
             .then(
                 if (isReady) Modifier.clickable { onClick() } else Modifier
             ),
@@ -583,7 +580,7 @@ private fun AnalysisButton(
             modifier = Modifier
                 .fillMaxWidth(fillProgress.value)
                 .height(52.dp)
-                .background(ChessOak),
+                .background(MaterialTheme.colorScheme.primary),
         )
 
         // Label
