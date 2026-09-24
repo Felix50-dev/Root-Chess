@@ -1,5 +1,6 @@
 package com.example.chess.data.model
 
+import com.example.chess.domain.model.DetectedTactic
 import com.example.chess.domain.model.GameSummary
 import com.example.chess.domain.model.MoveInsight
 data class AnalysisResult(
@@ -12,9 +13,9 @@ data class AnalysisResult(
     val bestMoves: List<String>,
     val captureOpportunity: List<CaptureOpportunity?>,
     val missedMates: List<MissedMate?>,
-    val tactics: List<List<String>>,
+    val tactics: List<List<DetectedTactic>>,
     val losses: List<Int>,
     val insights: List<MoveInsight>,
     val gameSummary: GameSummary?,
     val criticalMoveIndex: Int,
-)
+)    

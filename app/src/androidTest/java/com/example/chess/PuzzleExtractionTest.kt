@@ -21,7 +21,7 @@ class PuzzleExtractionTest {
 
     @Before
     fun setup() {
-        game = GamePlay(Board(), StockfishEngine())
+        game = testGamePlay()
     }
 
     private fun insight(move: String, category: String, bestMove: String) = MoveInsight(

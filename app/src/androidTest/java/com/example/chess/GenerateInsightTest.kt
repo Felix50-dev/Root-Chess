@@ -3,6 +3,7 @@ package com.example.chess
 import com.example.chess.data.StockfishEngine
 import com.example.chess.data.model.Board
 import com.example.chess.data.repository.GamePlay
+import com.example.chess.domain.model.DetectedTactic
 import com.example.chess.domain.model.InsightType
 import com.example.chess.domain.model.PositionEval
 import org.junit.Assert.assertEquals
@@ -22,7 +23,7 @@ class GenerateInsightTest {
 
     @Before
     fun setup() {
-        game = GamePlay(Board(), StockfishEngine())
+        game = testGamePlay()
     }
 
     private fun eval(score: Int) = PositionEval(
@@ -41,7 +42,7 @@ class GenerateInsightTest {
             bestMove = "c1c4",
             evalBefore = eval(0),
             evalAfter = eval(350),   // strongly good for the opponent post-move
-            tactics = listOf("Pin"),
+            tactics = listOf(DetectedTactic("Pin", "test pin description")),
             totalMoves = 20,
             category = "Blunder",
             nonPawnMaterial = 62,
@@ -58,7 +59,7 @@ class GenerateInsightTest {
             bestMove = "c1c4",
             evalBefore = eval(0),
             evalAfter = eval(-350),   // White ends up with a big material-scale edge
-            tactics = listOf("Pin"),
+            tactics = listOf(DetectedTactic("Pin", "test pin description")),
             totalMoves = 20,
             category = "Brilliant",
             nonPawnMaterial = 62,

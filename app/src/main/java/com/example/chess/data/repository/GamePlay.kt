@@ -1,6 +1,7 @@
 package com.example.chess.data.repository
 
 import android.util.Log
+import androidx.annotation.VisibleForTesting
 import com.example.chess.R
 import com.example.chess.data.StockfishEngine
 import com.example.chess.data.model.AILevel
@@ -24,6 +25,7 @@ import com.example.chess.data.model.Queen
 import com.example.chess.data.model.Rook
 import com.example.chess.data.model.SANMovePair
 import com.example.chess.data.model.Spot
+import com.example.chess.domain.model.DetectedTactic
 import com.example.chess.domain.model.GamePhase
 import com.example.chess.domain.model.GameSummary
 import com.example.chess.domain.model.MoveInsight
@@ -32,9 +34,12 @@ import com.example.chess.domain.model.OpeningMatch
 import com.example.chess.domain.model.PositionEval
 import com.example.chess.domain.toMaterialDescription
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.util.Collections
 import java.util.Locale
@@ -64,6 +69,11 @@ private const val MIN_UNIQUE_SOLUTION_GAP_CP = 100
 // move — roughly a minor piece's worth, so the tactic has to have actually
 // paid off, not just technically qualify.
 private const val MIN_BRILLIANT_MATERIAL_ADVANTAGE_CP = 300
+
+// Search time for each null-move threat probe (threatProbeFacts). Short on purpose:
+// probes run lazily while the user is looking at a review move, and at most two run
+// per flagged move.
+private const val THREAT_PROBE_MOVETIME_MS = 300L
 
 class GamePlay @Inject constructor(
     var board: Board,
@@ -97,7 +107,7 @@ class GamePlay @Inject constructor(
         val bestMove: String,
         val captureOpportunity: CaptureOpportunity?,
         val missedMate: MissedMate?,
-        val tactics: List<String>,
+        val tactics: List<DetectedTactic>,
         val isWhiteMove: Boolean,
         val nonPawnMaterial: Int,
         val hungPiece: ChessPiece?,
@@ -298,7 +308,14 @@ class GamePlay @Inject constructor(
             moveStr[2] in 'a'..'h' &&
             moveStr[3] in '1'..'8'
 
-    fun convertToMoveObject(moveStr: String, board: Board, player: Player): Move {
+    // updatePromotionFlow=false for analysis/replay callers: _promotionPieceFlow drives the
+    // live promotion UI, and replaying historical promotions must not clobber it.
+    fun convertToMoveObject(
+        moveStr: String,
+        board: Board,
+        player: Player,
+        updatePromotionFlow: Boolean = true,
+    ): Move {
         require(isValidAlgebraicMove(moveStr)) {
             "convertToMoveObject: not a well-formed move string: '$moveStr'"
         }
@@ -330,7 +347,9 @@ class GamePlay @Inject constructor(
             }
         }
 
-        _promotionPieceFlow.value = promotionPiece
+        if (updatePromotionFlow) {
+            _promotionPieceFlow.value = promotionPiece
+        }
 
         // A king moving two squares horizontally is, by the rules this engine enforces
         // elsewhere (King.canMove), only ever possible via castling.
@@ -468,7 +487,7 @@ class GamePlay @Inject constructor(
         val replayBoard = Board()
         for (ply in 0 until index) {
             val player = if (ply % 2 == 0) whitePlayer else blackPlayer
-            val move = convertToMoveObject(movesPlayed[ply], replayBoard, player)
+            val move = convertToMoveObject(movesPlayed[ply], replayBoard, player, updatePromotionFlow = false)
             applyMove(move, replayBoard)
         }
         return replayBoard
@@ -479,90 +498,511 @@ class GamePlay @Inject constructor(
     // (raw FEN was tried first and empirically still hallucinated piece identity; see
     // MoveExplainer). hungPieceSquare, if known, comes from MoveInsight.hungPieceSquare —
     // computed once during analysis, not re-derived here.
-    fun explanationFacts(movesPlayed: List<String>, index: Int, hungPieceSquare: String?): List<String> {
+    fun explanationFacts(
+        movesPlayed: List<String>,
+        index: Int,
+        hungPieceSquare: String?,
+        bestMoveUci: String? = null,
+    ): List<String> {
         val board = replayBoardUpTo(movesPlayed, index)
         val mover = if (index % 2 == 0) Player(isWhite = true, playerType = PlayerType.HUMAN)
         else Player(isWhite = false, playerType = PlayerType.HUMAN)
         val opponent = Player(isWhite = !mover.isWhite, playerType = PlayerType.HUMAN)
 
-        val move = convertToMoveObject(movesPlayed[index], board, mover)
+        // Describe the engine's better alternative — including what it would actually have
+        // achieved, computed by playing it on its own disposable replay board, so the LLM
+        // never guesses the benefit (QA showed it inventing follow-ups from the bare move).
+        val bestMoveDescription = bestMoveUci
+            ?.takeIf { isValidAlgebraicMove(it) && it != movesPlayed[index] }
+            ?.let { uci -> describeBestAlternative(movesPlayed, index, uci, mover, opponent) }
+
+        val moverColor = if (mover.isWhite) Color.WHITE else Color.BLACK
+        val move = convertToMoveObject(movesPlayed[index], board, mover, updatePromotionFlow = false)
+        // Rook connectivity BEFORE the move — compared post-move so the fact is only
+        // emitted when the move made it topical (see rookConnectionFact below).
+        val rookFactBefore = ExplanationFacts.describeRookConnection(board, moverColor)
         applyMove(move, board) // board is a disposable analysis copy — safe to mutate further
 
-        val givesCheck = detectCheck(opponent, board)
+        val givesCheck = isKingInCheck(board, kingOwner = opponent, attacker = mover)
         val checkEscapeFacts = if (givesCheck) buildCheckEscapeFacts(board, opponent, mover) else emptyList()
+        val isCheckmate = givesCheck && isCheckmateOnReplayBoard(board, defender = opponent, attacker = mover)
 
-        val hungPiece = hungPieceSquare?.let { square ->
-            val position = Position.fromAlgebraicNotation(square)
-            board.getBox(position.row, position.column).chessPiece
+        // Ground-truth relations of the piece that just moved, read off the post-move board:
+        // what it attacks, what it defends, and whether it can itself be captured. The LLM
+        // empirically invents these ("d4 supports e4", "the knight protects e6") whenever the
+        // facts only state piece positions — so state the relations outright.
+        val movedSpot = board.getBox(move.to.position.row, move.to.position.column)
+        val movedNow = movedSpot.chessPiece // post-move authority: promotion replaces pieceMoved
+        val movedPieceFacts = mutableListOf<String>()
+        var movedPieceSafetyEmitted = false
+        if (movedNow != null) {
+            val movedLabel = pieceLabel(movedNow)
+            val enemySpot = { p: ChessPiece -> board.getBox(p.position.row, p.position.column) }
+            // The enemy king is excluded: attacking it is check, which the move fact already states.
+            val attacked = getAlivePieces(opponent, board)
+                .filter { it !is King && attacksSquare(movedNow, board, enemySpot(it)) }
+            if (attacked.isNotEmpty()) {
+                movedPieceFacts += "The $movedLabel now attacks: ${attacked.joinToString(", ") { pieceLabel(it) }}."
+            }
+            val defended = getAlivePieces(mover, board)
+                .filter { it !== movedNow && it !is King && attacksSquare(movedNow, board, enemySpot(it)) }
+            if (defended.isNotEmpty()) {
+                movedPieceFacts += "The $movedLabel defends: ${defended.joinToString(", ") { pieceLabel(it) }}."
+            }
+            val attackers = getAlivePieces(opponent, board).filter { attacksSquare(it, board, movedSpot) }
+            if (attackers.isNotEmpty()) {
+                val defenders = getAlivePieces(mover, board)
+                    .filter { it !== movedNow && attacksSquare(it, board, movedSpot) }
+                captureFact(movedNow, attackers, defenders)?.let {
+                    movedPieceFacts += it
+                    movedPieceSafetyEmitted = true
+                }
+            }
         }
+
+        // Rook-connection fact only when the move made it topical: the mover's rook or
+        // king moved (incl. castling — the LLM loves the false "castling connects the
+        // rooks" cliché), or the move itself changed connectivity (e.g. a bishop leaving
+        // the back rank). An unconditional line was prompt noise on every quiet move.
+        val rookFactAfter = ExplanationFacts.describeRookConnection(board, moverColor)
+        val rookConnectionFact = when {
+            rookFactAfter == null -> null
+            movedNow is Rook || movedNow is King -> rookFactAfter
+            rookFactAfter == rookFactBefore -> null
+            rookFactAfter.contains(" are connected") && rookFactBefore?.contains("NOT connected") == true ->
+                rookFactAfter.replace(" are connected", " are now connected")
+            rookFactAfter.contains(" are NOT connected") && rookFactBefore?.contains(" are connected") == true ->
+                rookFactAfter.replace(" are NOT connected", " are no longer connected")
+            else -> rookFactAfter
+        }
+
+        val hungSpot = hungPieceSquare?.let { square ->
+            val position = Position.fromAlgebraicNotation(square)
+            board.getBox(position.row, position.column)
+        }
+        val hungPiece = hungSpot?.chessPiece
+        // Skip when the moved piece itself is the hung piece and its safety fact already says so.
+        val hungFactRedundant = movedPieceSafetyEmitted &&
+            hungPieceSquare == movedSpot.position.toAlgebraicNotation()
+        // "Undefended" must be verified, not assumed: hungPiece is just whatever the engine's
+        // best reply captures — it may well be defended (the capture merely wins on balance).
+        // Capturers/defenders are named so the LLM never spins "can be captured" into a
+        // fabricated material story (a defended piece being taken is a trade, not a loss).
+        val hungPieceFact = if (hungPiece != null && hungSpot != null && !hungFactRedundant) {
+            val capturers = getAlivePieces(opponent, board).filter { attacksSquare(it, board, hungSpot) }
+            val defenders = getAlivePieces(mover, board)
+                .filter { it !== hungPiece && attacksSquare(it, board, hungSpot) }
+            // No verified attacker (e.g. the engine reply captures en passant): keep the
+            // original unnamed wording rather than inventing a capturer.
+            captureFact(hungPiece, capturers, defenders)
+                ?: if (defenders.isEmpty()) "The ${hungPiece.typeName()} on $hungPieceSquare is undefended and can be captured."
+                else "The ${hungPiece.typeName()} on $hungPieceSquare can be captured."
+        } else null
 
         return ExplanationFacts.build(
             board = board,
             move = move,
             givesCheck = givesCheck,
             checkEscapeFacts = checkEscapeFacts,
-            hungPiece = hungPiece,
-            hungSquare = hungPieceSquare,
+            movedPieceFacts = movedPieceFacts,
+            hungPieceFact = hungPieceFact,
+            bestMoveDescription = bestMoveDescription,
+            rookConnectionFact = rookConnectionFact,
+            isCheckmate = isCheckmate,
         )
+    }
+
+    private fun colorWord(color: Color) = color.name.lowercase().replaceFirstChar { it.uppercase() }
+
+    private fun pieceLabel(piece: ChessPiece) =
+        "${colorWord(piece.color)} ${piece.typeName()} on ${piece.position.toAlgebraicNotation()}"
+
+    // The stronger alternative WITH its one-step consequences (check/mate, what it would
+    // attack, whether it would be safe), verified by playing it on a second replay board —
+    // the primary board must stay pre-move until the played move is applied.
+    private fun describeBestAlternative(
+        movesPlayed: List<String>,
+        index: Int,
+        uci: String,
+        mover: Player,
+        opponent: Player,
+    ): String? {
+        val altBoard = replayBoardUpTo(movesPlayed, index)
+        val altMove = convertToMoveObject(uci, altBoard, mover, updatePromotionFlow = false)
+        val piece = altMove.pieceMoved ?: return null
+        val from = altMove.from.position.toAlgebraicNotation()
+        val to = altMove.to.position.toAlgebraicNotation()
+        val capture = altMove.pieceKilled?.let { k ->
+            val capturedOn = if (altMove.isEnPassant) "${uci[2]}${uci[1]}" else to
+            ", capturing ${k.typeName()} on $capturedOn"
+        } ?: ""
+        val base = "Stronger alternative (NOT played): ${colorWord(piece.color)} ${piece.typeName()} " +
+            "from $from to $to$capture"
+
+        applyMove(altMove, altBoard)
+        val consequences = mutableListOf<String>()
+        if (isKingInCheck(altBoard, kingOwner = opponent, attacker = mover)) {
+            consequences += if (isCheckmateOnReplayBoard(altBoard, defender = opponent, attacker = mover)) {
+                "it would deliver checkmate"
+            } else {
+                "it would give check"
+            }
+        }
+        val altSpot = altBoard.getBox(altMove.to.position.row, altMove.to.position.column)
+        val altNow = altSpot.chessPiece
+        if (altNow != null) {
+            val attacked = getAlivePieces(opponent, altBoard).filter {
+                it !is King && attacksSquare(altNow, altBoard, altBoard.getBox(it.position.row, it.position.column))
+            }
+            if (attacked.isNotEmpty()) {
+                consequences += "it would then attack: ${attacked.joinToString(", ") { pieceLabel(it) }}"
+            }
+            val attackers = getAlivePieces(opponent, altBoard).filter { attacksSquare(it, altBoard, altSpot) }
+            if (attackers.isEmpty()) {
+                consequences += "it would be safe from capture there"
+            } else {
+                val defenders = getAlivePieces(mover, altBoard)
+                    .filter { it !== altNow && attacksSquare(it, altBoard, altSpot) }
+                captureFact(altNow, attackers, defenders)?.let {
+                    consequences += "on that square, ${it.replaceFirstChar { c -> c.lowercase() }}"
+                }
+            }
+        }
+        return if (consequences.isEmpty()) "$base." else "$base — ${consequences.joinToString("; ")}."
+    }
+
+    data class OpponentThreat(val uci: String, val gainCp: Int, val mateIn: Int?)
+
+    // Serializes probe searches against each other; the shared engine process has a single
+    // reader, so two overlapping search/read pairs would interleave their output.
+    private val engineMutex = Mutex()
+
+    // One null-move probe search: the FEN's side to move gets a short full-strength look
+    // at the position. NonCancellable so a user navigating away mid-search can't abandon
+    // the read halfway — an undrained "bestmove" would desync the next reader. Bounded by
+    // the engine's own 5s read timeout, so the delay is small and finite.
+    private suspend fun runProbeSearch(fen: String): PositionEval =
+        engineMutex.withLock {
+            withContext(NonCancellable) {
+                stockfish.setDifficultyLevel(20)
+                stockfish.sendCommand("setoption name MultiPV value 2")
+                stockfish.sendCommand("position fen $fen")
+                stockfish.sendCommand("go movetime $THREAT_PROBE_MOVETIME_MS")
+                stockfish.getDetailedEval()
+            }
+        }
+
+    // Filters the probe's PV lines down to threats that actually gain something. Scores are
+    // from the probe's side to move (the opponent), whose standing eval is -evalBeforeCp,
+    // so score + evalBeforeCp is the gain the free move achieves. Mate threats on PV1 are
+    // threshold-exempt; PV2 mate threats are invisible (its parser captures cp only).
+    internal fun selectMeaningfulThreats(
+        probeEval: PositionEval,
+        evalBeforeCp: Int,
+    ): List<OpponentThreat> {
+        val threats = mutableListOf<OpponentThreat>()
+        if (isValidAlgebraicMove(probeEval.bestMove)) {
+            val gain = probeEval.score + evalBeforeCp
+            if (probeEval.mateIn > 0 || gain >= ThreatFacts.THREAT_GAIN_THRESHOLD_CP) {
+                threats += OpponentThreat(
+                    probeEval.bestMove, gain, probeEval.mateIn.takeIf { it > 0 },
+                )
+            }
+        }
+        val second = probeEval.secondBestMove
+        val secondScore = probeEval.secondBestScore
+        if (second != null && isValidAlgebraicMove(second) && secondScore != null &&
+            secondScore + evalBeforeCp >= ThreatFacts.THREAT_GAIN_THRESHOLD_CP
+        ) {
+            threats += OpponentThreat(second, secondScore + evalBeforeCp, null)
+        }
+        return threats
+    }
+
+    // Null-move threat probing for the move at ply `index`: flip the side to move in the
+    // position BEFORE the move (a "pass") and let the engine show what the opponent was
+    // threatening, then report whether the played move and the engine's best alternative
+    // dealt with those threats. Returns verified fact sentences for the LLM explainer;
+    // empty when the position is quiet, the engine is unavailable, or a search degenerates.
+    suspend fun threatProbeFacts(
+        movesPlayed: List<String>,
+        index: Int,
+        evalBeforeCp: Int,
+        bestMoveUci: String?,
+        opponentReplyUci: String?,
+    ): List<String> {
+        if (index !in movesPlayed.indices) return emptyList()
+        val mover = if (index % 2 == 0) Player(isWhite = true, playerType = PlayerType.HUMAN)
+        else Player(isWhite = false, playerType = PlayerType.HUMAN)
+        val opponent = Player(isWhite = !mover.isWhite, playerType = PlayerType.HUMAN)
+        val moverColor = if (mover.isWhite) Color.WHITE else Color.BLACK
+        val opponentColor = if (mover.isWhite) Color.BLACK else Color.WHITE
+
+        val boardP = replayBoardUpTo(movesPlayed, index)
+        // Passing while in check is illegal, so the flipped FEN would be nonsense — and the
+        // check IS the threat; say exactly that instead of searching.
+        if (isKingInCheck(boardP, kingOwner = mover, attacker = opponent)) {
+            return listOf(ThreatFacts.inCheckFact(colorWord(moverColor)))
+        }
+
+        // En-passant rights are void after a pass, and an ep square belonging to the mover
+        // would make the flipped FEN illegal. boardP is disposable — safe to mutate.
+        boardP.enPassantTarget = null
+        val clampedEval = evalBeforeCp.coerceIn(-ThreatFacts.EVAL_CLAMP_CP, ThreatFacts.EVAL_CLAMP_CP)
+        val probeEval = runProbeSearch(FenConverter.toFen(boardP, opponentColor))
+        if (!isValidAlgebraicMove(probeEval.bestMove)) return emptyList() // dead/wedged engine
+        val threats = selectMeaningfulThreats(probeEval, clampedEval)
+        if (threats.isEmpty()) return emptyList()
+        Log.d(
+            TAG,
+            "threatProbe: ply=$index threats=${threats.map { "${it.uci}(+${it.gainCp}cp,mate=${it.mateIn})" }}"
+        )
+
+        // Second search: the opponent's best reply AFTER the stronger alternative — tells
+        // us which threats that alternative would have parried. This is a real position
+        // (not a null move), so keep the genuine en-passant state applyMove computes.
+        val replyEvalAfterBest = bestMoveUci
+            ?.takeIf { isValidAlgebraicMove(it) && it.take(4) != movesPlayed[index].take(4) }
+            ?.let { uci ->
+                val boardB = replayBoardUpTo(movesPlayed, index)
+                applyMove(convertToMoveObject(uci, boardB, mover, updatePromotionFlow = false), boardB)
+                runProbeSearch(FenConverter.toFen(boardB, opponentColor))
+            }
+            ?.takeIf { isValidAlgebraicMove(it.bestMove) }
+
+        val facts = mutableListOf<String>()
+        for (threat in threats) {
+            val threatMove =
+                convertToMoveObject(threat.uci, boardP, opponent, updatePromotionFlow = false)
+            val piece = threatMove.pieceMoved ?: continue
+            val from = threatMove.from.position.toAlgebraicNotation()
+            val to = threatMove.to.position.toAlgebraicNotation()
+            val killed = threatMove.pieceKilled
+            // En passant: the captured pawn sits beside the mover, not on the landing square
+            // (same convention as ExplanationFacts.describeMove).
+            val capturedSquare = killed?.let { if (threatMove.isEnPassant) "${to[0]}${from[1]}" else to }
+            facts += ThreatFacts.describeThreat(
+                opponentColorWord = colorWord(opponentColor),
+                pieceType = piece.typeName(),
+                from = from,
+                to = to,
+                capturedColorWord = killed?.let { colorWord(it.color) },
+                capturedType = killed?.typeName(),
+                capturedSquare = capturedSquare,
+                mateIn = threat.mateIn,
+            )
+            if (ThreatFacts.matchesThreat(threat.uci, opponentReplyUci)) {
+                facts += ThreatFacts.playedMoveFailsFact()
+            }
+            // When the alternative does NOT parry, emit nothing — "even the best move loses"
+            // would fight the prompt's "stronger alternative" framing.
+            if (replyEvalAfterBest != null &&
+                ThreatFacts.isParriedByAlternative(threat.uci, replyEvalAfterBest, clampedEval)
+            ) {
+                facts += ThreatFacts.alternativeParriesFact()
+            }
+        }
+        return facts
+    }
+
+    // Renders an engine PV (UCI plies) with piece names, starting from the position BEFORE
+    // ply `index` — for the summary prompt, which otherwise receives raw UCI the LLM decodes
+    // wrongly (QA showed it inventing "…Nxe4" from a coordinate line). Falls back to the raw
+    // input if any ply fails to parse.
+    fun describeContinuation(movesPlayed: List<String>, index: Int, continuation: List<String>): List<String> {
+        if (continuation.isEmpty() || index < 0 || index > movesPlayed.size) return continuation
+        val board = replayBoardUpTo(movesPlayed, index)
+        var isWhite = index % 2 == 0
+        val rendered = mutableListOf<String>()
+        for (uci in continuation) {
+            if (!isValidAlgebraicMove(uci)) return continuation
+            val player = Player(isWhite = isWhite, playerType = PlayerType.HUMAN)
+            val mv = convertToMoveObject(uci, board, player, updatePromotionFlow = false)
+            val piece = mv.pieceMoved ?: return continuation
+            val toSquare = mv.to.position.toAlgebraicNotation()
+            val action = mv.pieceKilled?.let { " takes ${it.typeName()} on $toSquare" } ?: " to $toSquare"
+            rendered += "${colorWord(piece.color)} ${piece.typeName()} ${mv.from.position.toAlgebraicNotation()}$action"
+            applyMove(mv, board)
+            isWhite = !isWhite
+        }
+        return rendered
+    }
+
+    // Full capture-safety fact for `target`, with a deterministic one-step exchange verdict
+    // so the LLM never invents the material story ("defended piece taken = loses a piece").
+    // Returns null when there is no attacker to describe.
+    private fun captureFact(
+        target: ChessPiece,
+        attackers: List<ChessPiece>,
+        defenders: List<ChessPiece>,
+    ): String? {
+        if (attackers.isEmpty()) return null
+        val label = "${colorWord(target.color)} ${target.typeName()} on ${target.position.toAlgebraicNotation()}"
+        // A defended piece can never legally be captured by the enemy king.
+        val legalAttackers = if (defenders.isEmpty()) attackers else attackers.filter { it !is King }
+        if (legalAttackers.isEmpty()) {
+            return "The $label is attacked only by the ${colorWord(attackers.first().color)} King, " +
+                "but it is defended by: ${defenders.joinToString(", ") { pieceLabel(it) }} — " +
+                "the King cannot legally capture it."
+        }
+        val capturedBy = "The $label can be captured by: ${legalAttackers.joinToString(", ") { pieceLabel(it) }}."
+        if (defenders.isEmpty()) {
+            return "$capturedBy No ${colorWord(target.color)} piece defends it — it can be taken for free."
+        }
+        val defenderText = "It is defended by: ${defenders.joinToString(", ") { pieceLabel(it) }}."
+        val cheapest = legalAttackers.minBy { it.pointValue() }
+        val verdict = when {
+            cheapest.pointValue() > target.pointValue() ->
+                "Capturing it with the ${cheapest.typeName()} would lose the ${cheapest.typeName()} " +
+                    "for the ${target.typeName()} — a bad trade for ${colorWord(cheapest.color)}."
+            cheapest.pointValue() == target.pointValue() ->
+                "A capture would be an even trade, not a win of material."
+            else ->
+                "Even though it is defended, ${colorWord(cheapest.color)} can win material " +
+                    "by capturing it with the ${cheapest.typeName()}."
+        }
+        return "$capturedBy $defenderText $verdict"
+    }
+
+    // Pure replay-board mate check — detectCheckMate() is unusable here (it reads the live
+    // board/players/currentTurn that only init() populates). Pseudo-legal escape scan with
+    // manual make/unmake. Castling king-slides are skipped (castling never escapes check);
+    // an en-passant-only escape is not modeled — that vanishingly rare case would wrongly
+    // report mate, accepted for a coaching fact.
+    private fun isCheckmateOnReplayBoard(board: Board, defender: Player, attacker: Player): Boolean {
+        if (!isKingInCheck(board, defender, attacker)) return false
+        for (piece in getAlivePieces(defender, board).toList()) {
+            val originalPosition = piece.position
+            val fromSpot = board.getBox(originalPosition.row, originalPosition.column)
+            for (target in getValidMoves(originalPosition, defender, board)) {
+                if (piece is King && abs(target.column - originalPosition.column) == 2) continue
+                val toSpot = board.getBox(target.row, target.column)
+                val captured = toSpot.chessPiece
+                if (captured is King) continue
+                toSpot.chessPiece = piece
+                fromSpot.chessPiece = null
+                piece.position = toSpot.position
+                val stillInCheck = isKingInCheck(board, defender, attacker)
+                piece.position = originalPosition
+                fromSpot.chessPiece = piece
+                toSpot.chessPiece = captured
+                if (!stillInCheck) return false
+            }
+        }
+        return true
+    }
+
+    // detectCheck(player, board) resolves the attacker via the lateinit `players` field,
+    // which only init() populates — explanationFacts runs on isolated replay boards with
+    // local Player objects (including from JVM tests) where init() may never have run,
+    // so resolve everything from the arguments instead.
+    private fun isKingInCheck(board: Board, kingOwner: Player, attacker: Player): Boolean {
+        val kingColor = if (kingOwner.isWhite) Color.WHITE else Color.BLACK
+        val kingSpot = findKing(board, kingColor) ?: return false
+        return getAlivePieces(attacker, board).any {
+            it.canMove(board, board.getBox(it.position.row, it.position.column), kingSpot)
+        }
+    }
+
+    // Whether `piece` attacks (could capture on) `target`, regardless of what currently
+    // occupies it. canMove alone can't answer this: it refuses same-color destinations
+    // (hiding defended pieces entirely), and a pawn's canMove to an empty diagonal square
+    // is false even though the pawn controls it.
+    private fun attacksSquare(piece: ChessPiece, board: Board, target: Spot): Boolean {
+        if (piece is Pawn) {
+            val direction = if (piece.color == Color.WHITE) -1 else 1
+            return target.position.row == piece.position.row + direction &&
+                abs(target.position.column - piece.position.column) == 1
+        }
+        val originalOccupant = target.chessPiece
+        target.chessPiece = null
+        val attacks = piece.canMove(
+            board,
+            board.getBox(piece.position.row, piece.position.column),
+            target
+        )
+        target.chessPiece = originalOccupant
+        return attacks
     }
 
     // Only answers one question, for the king that's currently in check: for each of its
     // up-to-8 adjacent squares, is it blocked (own piece) or attacked (by what)? Deliberately
     // does not attempt full block/capture-by-other-pieces analysis — see ExplanationFacts.
-    private fun buildCheckEscapeFacts(board: Board, kingOwner: Player, attacker: Player): List<String> {
+    @VisibleForTesting
+    internal fun buildCheckEscapeFacts(board: Board, kingOwner: Player, attacker: Player): List<String> {
         val kingColor = if (kingOwner.isWhite) Color.WHITE else Color.BLACK
-        val attackerColor = if (attacker.isWhite) Color.WHITE else Color.BLACK
         val kingSpot = findKing(board, kingColor) ?: return emptyList()
         val attackerPieces = getAlivePieces(attacker, board)
 
         val facts = mutableListOf<String>()
         val kingRow = kingSpot.position.row
         val kingCol = kingSpot.position.column
-        for (dRow in -1..1) {
-            for (dCol in -1..1) {
-                if (dRow == 0 && dCol == 0) continue
-                val row = kingRow + dRow
-                val col = kingCol + dCol
-                if (row !in 0 until Board.NUM_ROWS || col !in 0 until Board.NUM_COLUMNS) continue
-                val square = board.getBox(row, col)
-                val squareName = square.position.toAlgebraicNotation()
-                val occupant = square.chessPiece
-                when {
-                    occupant != null && occupant.color == kingColor ->
-                        facts += "King cannot move to $squareName (blocked by own ${occupant.typeName()})"
-                    else -> {
-                        val attackers = attackerPieces.filter {
-                            it.canMove(board, board.getBox(it.position.row, it.position.column), square)
-                        }
-                        if (attackers.isNotEmpty()) {
-                            val by = attackers.joinToString(" and ") { "${it.typeName()} on ${it.position.toAlgebraicNotation()}" }
-                            facts += "King cannot move to $squareName (attacked by $by)"
+
+        // Which enemy pieces currently give check — computed BEFORE the king is lifted below
+        // (canMove onto the occupied king square is the normal capture test, esp. for pawns).
+        val checkers = attackerPieces.filter {
+            it.canMove(board, board.getBox(it.position.row, it.position.column), kingSpot)
+        }
+
+        // Every attack test below models the king moving away, so lift it off its square
+        // first: a sliding checker's ray is otherwise blocked by the king's own body,
+        // wrongly reporting the square directly behind the king (along the checking ray)
+        // as safe, and hiding checker-defenders whose line passes through the king.
+        val kingPiece = kingSpot.chessPiece
+        kingSpot.chessPiece = null
+        try {
+            for (dRow in -1..1) {
+                for (dCol in -1..1) {
+                    if (dRow == 0 && dCol == 0) continue
+                    val row = kingRow + dRow
+                    val col = kingCol + dCol
+                    if (row !in 0 until Board.NUM_ROWS || col !in 0 until Board.NUM_COLUMNS) continue
+                    val square = board.getBox(row, col)
+                    val squareName = square.position.toAlgebraicNotation()
+                    val occupant = square.chessPiece
+                    when {
+                        occupant != null && occupant.color == kingColor ->
+                            facts += "King cannot move to $squareName (blocked by own ${occupant.typeName()})"
+                        else -> {
+                            val attackers = attackerPieces.filter { attacksSquare(it, board, square) }
+                            if (attackers.isNotEmpty()) {
+                                val by = attackers.joinToString(" and ") { "${it.typeName()} on ${it.position.toAlgebraicNotation()}" }
+                                facts += "King cannot move to $squareName (attacked by $by)"
+                            }
                         }
                     }
                 }
             }
-        }
 
-        // Whether the king can simply capture the checking piece — only meaningful (and only
-        // stated) when the checker is adjacent to the king in the first place.
-        val checkers = attackerPieces.filter {
-            it.canMove(board, board.getBox(it.position.row, it.position.column), kingSpot)
-        }
-        checkers.firstOrNull()?.let { checker ->
-            val adjacent = kotlin.math.abs(checker.position.row - kingRow) <= 1 &&
-                kotlin.math.abs(checker.position.column - kingCol) <= 1
-            if (adjacent) {
-                val checkerSquare = board.getBox(checker.position.row, checker.position.column)
-                val otherAttackers = attackerPieces.filter {
-                    it !== checker && it.canMove(board, board.getBox(it.position.row, it.position.column), checkerSquare)
-                }
-                facts += if (otherAttackers.isNotEmpty()) {
-                    val defendedBy = otherAttackers.joinToString(" and ") { "${it.typeName()} on ${it.position.toAlgebraicNotation()}" }
-                    "King cannot capture the checking ${checker.typeName()} on ${checker.position.toAlgebraicNotation()} (defended by $defendedBy)"
-                } else {
-                    "King can capture the checking ${checker.typeName()} on ${checker.position.toAlgebraicNotation()}"
+            // In a double check, capturing or blocking a single checker never resolves the
+            // check — the per-checker capture facts below stay individually true (each is
+            // conditioned on the capture square being safe from ALL other pieces), but the
+            // LLM needs the overriding constraint stated.
+            if (checkers.size > 1) {
+                val names = checkers.joinToString(" and ") { "${it.typeName()} on ${it.position.toAlgebraicNotation()}" }
+                facts += "This is a double check by $names — capturing or blocking one checker cannot resolve it; the King must move"
+            }
+
+            // Whether the king can simply capture a checking piece — only meaningful (and only
+            // stated) when the checker is adjacent to the king in the first place.
+            checkers.forEach { checker ->
+                val adjacent = abs(checker.position.row - kingRow) <= 1 &&
+                    abs(checker.position.column - kingCol) <= 1
+                if (adjacent) {
+                    val checkerSquare = board.getBox(checker.position.row, checker.position.column)
+                    val otherAttackers = attackerPieces.filter {
+                        it !== checker && attacksSquare(it, board, checkerSquare)
+                    }
+                    facts += if (otherAttackers.isNotEmpty()) {
+                        val defendedBy = otherAttackers.joinToString(" and ") { "${it.typeName()} on ${it.position.toAlgebraicNotation()}" }
+                        "King cannot capture the checking ${checker.typeName()} on ${checker.position.toAlgebraicNotation()} (defended by $defendedBy)"
+                    } else {
+                        "King can capture the checking ${checker.typeName()} on ${checker.position.toAlgebraicNotation()}"
+                    }
                 }
             }
+        } finally {
+            kingSpot.chessPiece = kingPiece
         }
 
         return facts
@@ -597,7 +1037,7 @@ class GamePlay @Inject constructor(
         bestMove: String,
         evalBefore: PositionEval,
         evalAfter: PositionEval,
-        tactics: List<String>,
+        tactics: List<DetectedTactic>,
         totalMoves: Int,
         category: String,
         nonPawnMaterial: Int,
@@ -701,11 +1141,17 @@ class GamePlay @Inject constructor(
             gamePhase = gamePhase,
             solutionGap = solutionGap,
             hungPieceSquare = hungPieceSquare,
+            // Stockfish mate scores are for the side to move: after this move it's the
+            // opponent's turn, so a positive mateIn means they now mate in N.
+            allowedMateIn = evalAfter.mateIn?.takeIf {
+                it > 0 && (evalBefore.mateIn == null || evalBefore.mateIn > 0)
+            },
+            opponentReplyUci = evalAfter.bestMove.takeIf { isValidAlgebraicMove(it) },
         )
     }
 
-    private fun buildTacticFoundMessage(tactics: List<String>, move: String): String {
-        val tacticName = tactics.first()
+    private fun buildTacticFoundMessage(tactics: List<DetectedTactic>, move: String): String {
+        val tacticName = tactics.first().name
         return when (tacticName) {
             "Fork" -> "Nice fork! ${move.toReadable()} attacks two pieces at once — your opponent is losing material."
             "Pin" -> "Good pin! You've tied down an enemy piece — it can't move without losing something more valuable."
@@ -948,12 +1394,12 @@ class GamePlay @Inject constructor(
         val evalAfterFromWhite = if (isWhiteMove) -evalAfter.score else evalAfter.score
 
         val recommendedMoveObject = if (isValidAlgebraicMove(evalBefore.bestMove)) {
-            convertToMoveObject(evalBefore.bestMove, firstBoard, currentPlayer)
+            convertToMoveObject(evalBefore.bestMove, firstBoard, currentPlayer, updatePromotionFlow = false)
         } else {
             Log.w(TAG, "analyzeSingleMove: no usable engine recommendation for ply $index (bestMove='${evalBefore.bestMove}')")
             null
         }
-        val playerMoveObject = convertToMoveObject(partialMove, firstBoard, currentPlayer)
+        val playerMoveObject = convertToMoveObject(partialMove, firstBoard, currentPlayer, updatePromotionFlow = false)
 
         var category = categorizeByLoss(loss)
         // Snapshot before this ply's move is applied below, so it matches the position
@@ -1007,7 +1453,13 @@ class GamePlay @Inject constructor(
             recognizer.isDiscoveredAttack(firstBoard, playerMoveObject, currentPlayer),
             recognizer.isSkewer(firstBoard, playerMoveObject),
             recognizer.isDoubleCheck(firstBoard, playerMoveObject, currentPlayer),
-        )
+        ).let { found ->
+            // A double check IS a discovered check plus the mover's own check — reporting
+            // both would make the insight message announce the weaker "Discovered check!"
+            // (it comes first in the list above) for what is really a double check.
+            if (found.any { it.name == "Double Check" }) found.filterNot { it.name == "Discovered Check" }
+            else found
+        }
         // A tactic pattern (Pin/Fork/etc.) only proves the tactic-executing piece is safe
         // on its own landing square — it says nothing about whether a later move actually
         // exploiting it (e.g. capturing a "pinned" piece that's defended elsewhere) is
@@ -1028,7 +1480,7 @@ class GamePlay @Inject constructor(
         // reliable than guessing a piece from the raw eval-loss magnitude.
         val opponentPlayer = if (isWhiteMove) players[1] else players[0]
         val hungPiece = if (isValidAlgebraicMove(evalAfter.bestMove)) {
-            convertToMoveObject(evalAfter.bestMove, firstBoard, opponentPlayer).pieceKilled
+            convertToMoveObject(evalAfter.bestMove, firstBoard, opponentPlayer, updatePromotionFlow = false).pieceKilled
         } else null
         // Captured as a plain square string (not re-derived from hungPiece.position later) —
         // firstBoard keeps advancing for the rest of the game's analysis, so a live piece
@@ -1203,9 +1655,12 @@ class GamePlay @Inject constructor(
 
                 // Send the position and start Stockfish thinking
                 stockfish.sendCommand("position startpos moves $movesString")
-                val skillLevel = if (level == AILevel.LEVEL1) 0 else 4
-                stockfish.setDifficultyLevel(skillLevel)
-                stockfish.sendCommand("go movetime 1")
+                stockfish.setDifficultyLevel(level.skillLevel)
+                // Undo the MultiPV=2 a prior analysis run (evaluateAllPositions) may have
+                // left on this shared engine process — live play wants the full search
+                // budget on one line.
+                stockfish.sendCommand("setoption name MultiPV value 1")
+                stockfish.sendCommand("go movetime ${level.moveTimeMs}")
 
                 val bestMove = stockfish.getBestMove()
                 Log.d(TAG, "handleAIMove: moveByStockfish is $bestMove")

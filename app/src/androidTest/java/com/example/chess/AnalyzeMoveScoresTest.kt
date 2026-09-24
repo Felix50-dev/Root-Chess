@@ -24,7 +24,7 @@ class AnalyzeMoveScoresTest {
     @Before
     fun setup() {
         val board = Board()
-        game = GamePlay(board, StockfishEngine())
+        game = testGamePlay(board)
         player1 = Player(isWhite = true, PlayerType.HUMAN)
         player2 = Player(isWhite = false, PlayerType.HUMAN)
         game.init(player1, player2, true)
@@ -356,6 +356,8 @@ class AnalyzeMoveScoresTest {
         tactics = emptyList(),
         isWhiteMove = isWhite,
         nonPawnMaterial = 62,
+        hungPiece = null,
+        hungPieceSquare = null,
     )
 }
 

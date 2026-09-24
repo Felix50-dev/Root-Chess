@@ -37,7 +37,7 @@ class GamePlayTest {
     fun testConvertToMoveObjectForNormalMove() {
         val moveStr = "b1c3" // Knight from b1 to c3
         val stockfish = StockfishEngine()
-        val game = GamePlay(board, stockfish)
+        val game = testGamePlay(board, stockfish)
         val move = game.convertToMoveObject(moveStr, board, whitePlayer)
 
         assertEquals(Position(row=7, column=1), move.from.position)
@@ -50,7 +50,7 @@ class GamePlayTest {
     fun testConvertToMoveObjectForNormalMoveKillsPiece() {
         val moveStr = "f3f7"
         val stockfish = StockfishEngine()
-        val game = GamePlay(board, stockfish)
+        val game = testGamePlay(board, stockfish)
         val move = game.convertToMoveObject(moveStr, board, whitePlayer)
 
         assertEquals(Position(row=5, column=5), move.from.position)
@@ -66,7 +66,7 @@ class GamePlayTest {
         board.getBox(1, 4).chessPiece = Pawn(color = Color.WHITE, position = Position(1, 4), isKilled = false)
         val moveStr = "e7e8q"
         val stockfish = StockfishEngine()
-        val game = GamePlay(board, stockfish)
+        val game = testGamePlay(board, stockfish)
         val move = game.convertToMoveObject(moveStr, board, whitePlayer)
 
         assertEquals("e7", move.from.position.toAlgebraicNotation())
@@ -80,7 +80,7 @@ class GamePlayTest {
     fun testConvertToMoveObjectWithInvalidStringThrowsException() {
         val moveStr = ""
         val stockfish = StockfishEngine()
-        val game = GamePlay(board, stockfish)
+        val game = testGamePlay(board, stockfish)
         game.convertToMoveObject(moveStr, board, whitePlayer)
     }
 }

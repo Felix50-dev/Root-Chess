@@ -1,7 +1,10 @@
 package com.example.chess.data.repository
 
+import android.content.Context
+import com.example.chess.BuildConfig
 import com.example.chess.data.remote.GroqApi
 import com.example.chess.domain.model.GameSummaryRequest
+import dagger.hilt.android.qualifiers.ApplicationContext
 import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -10,7 +13,8 @@ data class GeneratedGameSummary(val narrative: String, val weaknessHint: String)
 
 @Singleton
 class GameSummaryGenerator @Inject constructor(
-    private val groqApi: GroqApi
+    private val groqApi: GroqApi,
+    @ApplicationContext private val context: Context,
 ) {
     // Singleton-scoped, same concurrency concern as MoveExplainer's cache.
     private val cache = ConcurrentHashMap<String, GeneratedGameSummary>()
@@ -20,17 +24,33 @@ class GameSummaryGenerator @Inject constructor(
         cache[cacheKey]?.let { return it }
 
         val prompt = buildPrompt(request)
-        val raw = groqApi.completeChat(
-            systemInstruction = SYSTEM_INSTRUCTION,
-            turns = listOf("user" to prompt),
-            maxOutputTokens = 650,
-            temperature = 0.6,
-        )
+        val raw = try {
+            groqApi.completeChat(
+                systemInstruction = SYSTEM_INSTRUCTION,
+                turns = listOf("user" to prompt),
+                maxOutputTokens = 650,
+                temperature = 0.6,
+            )
+        } catch (e: Exception) {
+            capture("=== SUMMARY ===\n$prompt\n--- ERROR ---\n${e.javaClass.simpleName}: ${e.message}")
+            throw e
+        }
+        capture("=== SUMMARY ===\n$prompt\n--- RESPONSE ---\n$raw")
         val parsed = parse(raw)
             ?: throw IllegalStateException("Unparseable Groq game-summary response: $raw")
 
         cache[cacheKey] = parsed
         return parsed
+    }
+
+    // TEMP-CAPTURE: file-based diagnostic mirroring MoveExplainer.capture — remove after
+    // the explanation-regression analysis. Debug-only; failures swallowed.
+    private fun capture(entry: String) {
+        if (!BuildConfig.DEBUG) return
+        runCatching {
+            context.filesDir.resolve("ai_capture.log")
+                .appendText("[${System.currentTimeMillis()}] $entry\n\n")
+        }
     }
 
     private fun buildPrompt(r: GameSummaryRequest): String {
@@ -46,11 +66,11 @@ class GameSummaryGenerator @Inject constructor(
             "${r.longestStreakPlayer}'s longest accurate-move streak: ${r.longestStreakLength} moves in a row"
         } else ""
         val continuationLine = if (r.criticalMoveBestContinuation.isNotEmpty()) {
-            "The better continuation was: ${r.criticalMoveBestContinuation.joinToString(" ")}"
+            "The better continuation was: ${r.criticalMoveBestContinuation.joinToString("; ")}"
         } else ""
 
         return """
-            Game so far (PGN): ${r.pgn}
+            Game so far (moves in coordinate notation, from-square then to-square — e.g. g1f3 means the piece on g1 moved to f3): ${r.pgn}
             Total moves: ${r.totalMoves}
             White accuracy: ${"%.1f".format(r.whiteAccuracy)}%
             Black accuracy: ${"%.1f".format(r.blackAccuracy)}%
@@ -78,6 +98,8 @@ class GameSummaryGenerator @Inject constructor(
             Rules:
             - Do not use the words "engine" or "Stockfish"
             - Name specific pieces/squares/moves where relevant
+            - Never invent or cite a move that does not appear in the game moves or the better-continuation line above — if unsure what punished a mistake, describe the idea without naming a concrete move
+            - Never mention numeric evaluations or "pawns of evaluation" — describe swings in plain words
             - Complexity matches ${r.playerElo} elo
             - Keep NARRATIVE to 2-3 sentences and TIP to 1 sentence
         """.trimIndent()

@@ -30,7 +30,7 @@ class HasMovedRestorationTest {
     fun setup() {
         board = Board()
         val stockfish = StockfishEngine()
-        game = GamePlay(board, stockfish)
+        game = testGamePlay(board, stockfish)
         player1 = Player(isWhite = true, PlayerType.HUMAN)
         player2 = Player(isWhite = false, PlayerType.HUMAN)
         game.init(player1, player2, true)

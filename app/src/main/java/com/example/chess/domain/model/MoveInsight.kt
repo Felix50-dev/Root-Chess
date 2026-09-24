@@ -15,6 +15,13 @@ data class MoveInsight(
     val gamePhase: GamePhase,
     val solutionGap: Int? = null,  // eval gap between best and 2nd-best line at this position
     val hungPieceSquare: String? = null,  // square of the piece this move leaves undefended, if any
+    // Mate the move newly ALLOWED against the mover (opponent mates in N after it, and no
+    // forced mate against the mover existed before) — null when mate was unavoidable anyway,
+    // so "the alternative would have prevented it" is only ever claimed when true.
+    val allowedMateIn: Int? = null,
+    // The opponent's best reply to the move actually played (engine line at the next ply) —
+    // used by the threat probe to tell whether a probed threat went unaddressed.
+    val opponentReplyUci: String? = null,
 )
 
 enum class InsightType {

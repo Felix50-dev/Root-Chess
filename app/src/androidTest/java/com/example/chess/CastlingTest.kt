@@ -33,7 +33,7 @@ class CastlingTest {
     fun setup() {
         board = Board()
         val stockfish = StockfishEngine()
-        game = GamePlay(board, stockfish)
+        game = testGamePlay(board, stockfish)
         player1 = Player(isWhite = true,  playerType = PlayerType.HUMAN)
         player2 = Player(isWhite = false, playerType = PlayerType.HUMAN)
         game.init(player1, player2, true)

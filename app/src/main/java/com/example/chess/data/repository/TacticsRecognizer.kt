@@ -12,6 +12,7 @@ import com.example.chess.data.model.Player
 import com.example.chess.data.model.Position
 import com.example.chess.data.model.Queen
 import com.example.chess.data.model.Rook
+import com.example.chess.domain.model.DetectedTactic
 import javax.inject.Inject
 
 private const val TAG = "TacticsRecognizer"
@@ -26,7 +27,73 @@ class TacticsRecognizer @Inject constructor(
         const val MIN_FORK_TARGET_VALUE = 3
     }
 
-    fun isFork(board: Board, move: Move, player: Player): String? {
+    private fun colorWord(color: Color) = color.name.lowercase().replaceFirstChar { it.uppercase() }
+
+    // Same vocabulary as GamePlay.pieceLabel, so tactic descriptions and the other
+    // Facts speak one dialect in the LLM prompt. `pos` is passed explicitly instead of
+    // reading piece.position because position fields on pieces found via getBox scans
+    // can be stale — always use the scan coordinates.
+    private fun label(piece: ChessPiece, pos: Position) =
+        "${colorWord(piece.color)} ${piece.typeName()} on ${pos.toAlgebraicNotation()}"
+
+    private fun slidingDirections(piece: ChessPiece): List<Pair<Int, Int>>? = when (piece) {
+        is Rook -> listOf(
+            Pair(1, 0), Pair(-1, 0), Pair(0, 1), Pair(0, -1)
+        )
+        is Bishop -> listOf(
+            Pair(1, 1), Pair(1, -1), Pair(-1, 1), Pair(-1, -1)
+        )
+        is Queen -> listOf(
+            Pair(1, 0), Pair(-1, 0), Pair(0, 1), Pair(0, -1),
+            Pair(1, 1), Pair(1, -1), Pair(-1, 1), Pair(-1, -1)
+        )
+        else -> null
+    }
+
+    private data class RayPair(
+        val first: ChessPiece,
+        val firstPos: Position,
+        val second: ChessPiece,
+        val secondPos: Position,
+    )
+
+    // Walks from `origin` (exclusive) in direction (dr, dc) and returns the first two
+    // enemy pieces on the ray, or null if an own piece blocks it first or fewer than
+    // two enemy pieces are found. Walking square-by-square doubles as path-clearance
+    // verification, so callers need no separate "can the attacker reach" check.
+    // Read-only: only getBox, no getAlivePieces position-sync side effects.
+    private fun findRayPair(board: Board, origin: Position, dr: Int, dc: Int, myColor: Color): RayPair? {
+        var r = origin.row + dr
+        var c = origin.column + dc
+        var first: ChessPiece? = null
+        var firstPos: Position? = null
+
+        while (r in 0..7 && c in 0..7) {
+            val sq = board.getBox(r, c).chessPiece
+            if (sq != null) {
+                if (sq.color == myColor) return null  // own piece blocks the ray
+                if (first == null) {
+                    first = sq
+                    firstPos = Position(r, c)
+                } else {
+                    return RayPair(first, firstPos!!, sq, Position(r, c))
+                }
+            }
+            r += dr
+            c += dc
+        }
+        return null
+    }
+
+    // Attacking `target` is only a real threat when something can come of it: it's the
+    // king (check), it's worth more than the attacker (capturing profits even if
+    // defended), or it can be captured at a net profit. One capture deep — not a full
+    // static exchange evaluation, but enough to stop labelling attacks on well-defended
+    // equal-or-lesser pieces as tactics.
+    private fun isRealThreat(board: Board, target: ChessPiece, pos: Position, attackerValue: Int) =
+        target is King || target.value > attackerValue || isPieceHangingForFree(board, target, pos)
+
+    fun isFork(board: Board, move: Move, player: Player): DetectedTactic? {
         val piece = move.pieceMoved ?: return null
         if (piece is King) return null  // kings don't fork
 
@@ -40,39 +107,52 @@ class TacticsRecognizer @Inject constructor(
         tempBoard.getBox(move.from.position.row, move.from.position.column).chessPiece = null
         tempBoard.getBox(move.to.position.row, move.to.position.column).chessPiece = piece
 
-        // Get all squares the piece attacks from its new position
-        val attackedPieces = mutableListOf<ChessPiece>()
+        // Get all pieces this piece attacks from its new position that are actually
+        // threatened by the attack — attacking a well-defended equal-or-lesser piece
+        // isn't a fork prong, the "forked" side just ignores it.
+        val targets = mutableListOf<Pair<ChessPiece, Position>>()
+        val fromSpot = tempBoard.getBox(move.to.position.row, move.to.position.column)
 
         for (row in 0..7) {
             for (col in 0..7) {
                 val targetSquare = tempBoard.getBox(row, col)
                 val target = targetSquare.chessPiece ?: continue
                 if (target.color == myColor) continue  // skip own pieces
-
-                val fromSpot = tempBoard.getBox(move.to.position.row, move.to.position.column)
-                if (piece.canMove(tempBoard, fromSpot, targetSquare)) {
-                    if (target.value >= MIN_FORK_TARGET_VALUE) {
-                        attackedPieces.add(target)
-                    }
-                }
+                if (target.value < MIN_FORK_TARGET_VALUE) continue
+                if (!piece.canMove(tempBoard, fromSpot, targetSquare)) continue
+                if (!isRealThreat(tempBoard, target, Position(row, col), piece.value)) continue
+                targets.add(target to Position(row, col))
             }
         }
 
-        Log.d(TAG, "isFork: attacked pieces are $attackedPieces")
+        Log.d(TAG, "isFork: qualifying targets are ${targets.map { it.second }}")
 
-        if (attackedPieces.size < 2) return null
+        if (targets.size < 2) return null
 
         // A fork that just hangs the forking piece for free isn't a real threat — the
         // opponent simply takes it instead of losing one of the forked pieces.
         if (isPieceHangingForFree(tempBoard, piece, move.to.position)) return null
 
-        return "Fork"
+        // The double attack must be created by THIS move: a slider gliding along a line
+        // while keeping the same targets under attack would otherwise re-report its old
+        // fork every ply. At least one prong has to be new from the destination square.
+        val originSpot = board.getBox(move.from.position.row, move.from.position.column)
+        val createsNewThreat = targets.any { (_, pos) ->
+            !piece.canMove(board, originSpot, board.getBox(pos.row, pos.column))
+        }
+        if (!createsNewThreat) return null
+
+        return DetectedTactic(
+            name = "Fork",
+            description = "The ${label(piece, move.to.position)} forks the " +
+                targets.joinToString(" and ") { (target, pos) -> label(target, pos) } + "."
+        )
     }
 
-
-    fun isPin(board: Board, move: Move, player: Player): String? {
+    fun isPin(board: Board, move: Move, player: Player): DetectedTactic? {
         val movedPiece = move.pieceMoved ?: return null
-        if (movedPiece !is Queen && movedPiece !is Rook && movedPiece !is Bishop) return null
+        // Only sliding pieces pin; slidingDirections doubles as the piece-type gate.
+        val directions = slidingDirections(movedPiece) ?: return null
 
         // `player` is the source of truth for whose perspective this is, rather than
         // re-deriving color from `movedPiece` — see isFork for the same reasoning.
@@ -83,73 +163,63 @@ class TacticsRecognizer @Inject constructor(
         tempBoard.getBox(move.from.position.row, move.from.position.column).chessPiece = null
         tempBoard.getBox(move.to.position.row, move.to.position.column).chessPiece = movedPiece
 
-        // Only check directions valid for the piece type — same approach as
-        // isSkewer. Walking square-by-square also doubles as path-clearance
-        // verification, so there's no separate "can the attacker actually reach
-        // the back piece" check needed afterward.
-        val directions = when (movedPiece) {
-            is Rook -> listOf(
-                Pair(1, 0), Pair(-1, 0), Pair(0, 1), Pair(0, -1)
-            )
-            is Bishop -> listOf(
-                Pair(1, 1), Pair(1, -1), Pair(-1, 1), Pair(-1, -1)
-            )
-            is Queen -> listOf(
-                Pair(1, 0), Pair(-1, 0), Pair(0, 1), Pair(0, -1),
-                Pair(1, 1), Pair(1, -1), Pair(-1, 1), Pair(-1, -1)
-            )
-            else -> return null
-        }
-
         // A pin where the pinning piece itself is just hanging for free isn't a
         // lasting threat — the opponent captures it instead of living with the pin.
-        // Same property-of-the-destination-square reasoning as isSkewer, checked once.
-        val isHanging = isPieceHangingForFree(tempBoard, movedPiece, move.to.position)
+        // Property of the destination square, not of any one direction, so checked once.
+        if (isPieceHangingForFree(tempBoard, movedPiece, move.to.position)) return null
+
+        // Pins this piece was ALREADY delivering from its origin square, on the real
+        // pre-move board. A slider gliding along the pinning ray keeps the same pin —
+        // that's not a tactic this move created, so it must not be re-reported.
+        // Identity by id: Board.clone() preserves piece ids.
+        val preExistingPins = directions.mapNotNull { (dr, dc) ->
+            findRayPair(board, move.from.position, dr, dc, myColor)
+        }.filter { qualifiesAsPin(it) }
+            .map { it.first.id to it.second.id }
+            .toSet()
 
         for ((dr, dc) in directions) {
-            var r = move.to.position.row + dr
-            var c = move.to.position.column + dc
+            val pin = findRayPair(tempBoard, move.to.position, dr, dc, myColor) ?: continue
+            if (!qualifiesAsPin(pin)) continue
 
-            var pinnedPiece: ChessPiece? = null
-            var backPiece: ChessPiece? = null
+            // A pawn "pinned" along a file isn't pinned at all — its pushes stay on the
+            // ray, so nothing is restrained and the shielded piece is never exposed.
+            if (pin.first is Pawn && dc == 0) continue
 
-            while (r in 0..7 && c in 0..7) {
-                val sq = tempBoard.getBox(r, c).chessPiece
-                if (sq != null) {
-                    if (sq.color == myColor) break  // own piece blocks the ray
+            // A defended pawn pinned on a rank or diagonal isn't a reportable tactic
+            // either: the pinner can never profitably take it, and immobilizing a pawn
+            // wins nothing. Pieces (value >= 3) stay reportable even when defended —
+            // a knight pinned to its king is genuinely out of the game.
+            if (pin.first is Pawn && !isPieceHangingForFree(tempBoard, pin.first, pin.firstPos)) continue
 
-                    if (pinnedPiece == null) {
-                        pinnedPiece = sq
-                    } else {
-                        backPiece = sq
-                        break
-                    }
-                }
-                r += dr
-                c += dc
-            }
+            // continue, not return: a genuinely new pin in another direction still counts.
+            if ((pin.first.id to pin.second.id) in preExistingPins) continue
 
-            // A pin needs an ordinary piece in front — never the king itself, since a
-            // king being attacked is a check, not a pin — with either the enemy king
-            // or a strictly more valuable piece directly behind it (absolute pin vs.
-            // relative pin; a pin against an equal-or-lesser-value piece isn't a real
-            // tactic, matching isSkewer's strictly-greater comparison).
-            if (pinnedPiece != null && pinnedPiece !is King && backPiece != null && !isHanging) {
-                val isKingBehind = backPiece is King
-                val isMoreValuable = backPiece.value > pinnedPiece.value
-                if (isKingBehind || isMoreValuable) {
-                    return "Pin"
-                }
-            }
+            return DetectedTactic(
+                name = "Pin",
+                description = "The ${label(movedPiece, move.to.position)} pins the " +
+                    "${label(pin.first, pin.firstPos)} against the ${label(pin.second, pin.secondPos)}."
+            )
         }
 
         return null
     }
 
-    fun isDiscoveredCheck(board: Board, move: Move, player: Player): String? {
+    // A pin needs an ordinary piece in front — never the king itself, since a king
+    // being attacked is a check, not a pin — with either the enemy king or a strictly
+    // more valuable piece directly behind it (absolute pin vs. relative pin; a pin
+    // against an equal-or-lesser-value piece isn't a real tactic, matching isSkewer's
+    // strictly-greater comparison).
+    private fun qualifiesAsPin(pair: RayPair): Boolean {
+        if (pair.first is King) return false
+        return pair.second is King || pair.second.value > pair.first.value
+    }
+
+    fun isDiscoveredCheck(board: Board, move: Move, player: Player): DetectedTactic? {
         val piece = move.pieceMoved ?: return null
 
-        // Simulate on tempBoard
+        // Simulate on tempBoard. (The simulation ignores castling's rook hop and the
+        // en-passant victim square — pre-existing limitation shared by all detectors.)
         val tempBoard = board.clone()
         tempBoard.getBox(move.from.position.row, move.from.position.column).chessPiece = null
         tempBoard.getBox(move.to.position.row, move.to.position.column).chessPiece = piece
@@ -178,7 +248,19 @@ class TacticsRecognizer @Inject constructor(
         }
         Log.d(TAG, "isDiscoveredCheck: newAttackers: $newAttackers")
 
-        return if (newAttackers.isNotEmpty()) "Discovered Check" else null
+        if (newAttackers.isEmpty()) return null
+
+        val opponentColor = if (player.isWhite) Color.BLACK else Color.WHITE
+        val kingPos = game.findKing(tempBoard, opponentColor)?.position ?: return null
+        // newAttackers come via getAlivePieces, which syncs positions — safe to read.
+        val attacker = newAttackers.first()
+
+        return DetectedTactic(
+            name = "Discovered Check",
+            description = "Moving the ${label(piece, move.to.position)} revealed a discovered check: " +
+                "the ${label(attacker, attacker.position)} now checks the " +
+                "${colorWord(opponentColor)} King on ${kingPos.toAlgebraicNotation()}."
+        )
     }
 
     private fun attackersToOpponentKing(board: Board, player: Player): List<ChessPiece> {
@@ -200,7 +282,7 @@ class TacticsRecognizer @Inject constructor(
     // mover's pieces now attacking an enemy piece it didn't attack before — same
     // detection shape as isDiscoveredCheck, generalized from "attacks the king" to
     // "attacks any sufficiently valuable non-king enemy piece".
-    fun isDiscoveredAttack(board: Board, move: Move, player: Player): String? {
+    fun isDiscoveredAttack(board: Board, move: Move, player: Player): DetectedTactic? {
         val piece = move.pieceMoved ?: return null
 
         val tempBoard = board.clone()
@@ -226,76 +308,74 @@ class TacticsRecognizer @Inject constructor(
                     .toSet()
                 val afterAttackers = attackersOf(tempBoard, player, targetPosition)
 
-                val hasNewAttacker = afterAttackers.any { attacker ->
+                val newAttacker = afterAttackers.firstOrNull { attacker ->
                     attacker.id !in beforeAttackerIds && attacker.id != piece.id
-                }
-                if (hasNewAttacker) {
-                    return "Discovered Attack"
-                }
+                } ?: continue
+
+                // The revealed attack must actually threaten something: attacking a
+                // well-defended equal-or-lesser piece is a non-event, and a revealed
+                // attacker that itself hangs for free just gets captured.
+                if (!isRealThreat(tempBoard, targetAfter, targetPosition, newAttacker.value)) continue
+                if (isPieceHangingForFree(tempBoard, newAttacker, newAttacker.position)) continue
+
+                return DetectedTactic(
+                    name = "Discovered Attack",
+                    description = "Moving the ${label(piece, move.to.position)} uncovered a discovered attack: " +
+                        "the ${label(newAttacker, newAttacker.position)} now attacks the " +
+                        "${label(targetAfter, targetPosition)}."
+                )
             }
         }
 
         return null
     }
 
-    fun isSkewer(board: Board, move: Move): String? {
+    fun isSkewer(board: Board, move: Move): DetectedTactic? {
         val piece = move.pieceMoved ?: return null
-        if (piece !is Rook && piece !is Bishop && piece !is Queen) return null
+        // Only sliding pieces skewer; slidingDirections doubles as the piece-type gate.
+        val directions = slidingDirections(piece) ?: return null
+        val myColor = piece.color
 
         // Simulate entirely on tempBoard
         val tempBoard = board.clone()
         tempBoard.getBox(move.from.position.row, move.from.position.column).chessPiece = null
         tempBoard.getBox(move.to.position.row, move.to.position.column).chessPiece = piece
 
-        // Only check directions valid for the piece type
-        val directions = when (piece) {
-            is Rook -> listOf(
-                Pair(1, 0), Pair(-1, 0), Pair(0, 1), Pair(0, -1)
-            )
-            is Bishop -> listOf(
-                Pair(1, 1), Pair(1, -1), Pair(-1, 1), Pair(-1, -1)
-            )
-            is Queen -> listOf(
-                Pair(1, 0), Pair(-1, 0), Pair(0, 1), Pair(0, -1),
-                Pair(1, 1), Pair(1, -1), Pair(-1, 1), Pair(-1, -1)
-            )
-            else -> return null
-        }
-
         // A skewer that just hangs the skewering piece for free isn't a real threat —
         // the opponent simply takes it instead of losing the piece behind. This is a
         // property of the piece's destination square, not of any one direction, so it
         // only needs to be checked once.
-        val isHanging = isPieceHangingForFree(tempBoard, piece, move.to.position)
+        if (isPieceHangingForFree(tempBoard, piece, move.to.position)) return null
+
+        // Skewers this piece was already delivering from its origin square — a slider
+        // gliding along the same ray must not re-report its old skewer (see isPin).
+        val preExistingSkewers = directions.mapNotNull { (dr, dc) ->
+            findRayPair(board, move.from.position, dr, dc, myColor)
+        }.filter { it.first.value > it.second.value }
+            .map { it.first.id to it.second.id }
+            .toSet()
 
         for ((dr, dc) in directions) {
-            var r = move.to.position.row + dr
-            var c = move.to.position.column + dc
+            val pair = findRayPair(tempBoard, move.to.position, dr, dc, myColor) ?: continue
+            if (pair.first.value <= pair.second.value) continue
 
-            var firstPiece: ChessPiece? = null
-            var secondPiece: ChessPiece? = null
+            // The piece BEHIND is what the skewer actually wins — if capturing it once
+            // the front piece moves gains nothing (defended, equal-or-lesser value),
+            // the "skewer" threatens nothing. The front piece is removed first: it's
+            // about to be forced off the ray, and while it stands it blocks the very
+            // attack being evaluated. Approximation: where the front piece lands could
+            // still change the back piece's defenses.
+            val boardWithoutFront = tempBoard.clone()
+            boardWithoutFront.getBox(pair.firstPos.row, pair.firstPos.column).chessPiece = null
+            if (!isRealThreat(boardWithoutFront, pair.second, pair.secondPos, piece.value)) continue
 
-            while (r in 0..7 && c in 0..7) {
-                val sqPiece = tempBoard.getBox(r, c).chessPiece  // ← use tempBoard
-                if (sqPiece != null) {
-                    if (sqPiece.color == piece.color) break
+            if ((pair.first.id to pair.second.id) in preExistingSkewers) continue
 
-                    if (firstPiece == null) {
-                        firstPiece = sqPiece
-                    } else {
-                        secondPiece = sqPiece
-                        break
-                    }
-                }
-                r += dr
-                c += dc
-            }
-
-            if (firstPiece != null && secondPiece != null &&
-                firstPiece.value > secondPiece.value && !isHanging
-            ) {
-                return "Skewer"
-            }
+            return DetectedTactic(
+                name = "Skewer",
+                description = "The ${label(piece, move.to.position)} skewers the " +
+                    "${label(pair.first, pair.firstPos)} against the ${label(pair.second, pair.secondPos)}."
+            )
         }
 
         return null
@@ -346,7 +426,7 @@ class TacticsRecognizer @Inject constructor(
         return !isDefended || attackerValue < piece.value
     }
 
-    fun isDoubleCheck(board: Board, move: Move, player: Player): String? {
+    fun isDoubleCheck(board: Board, move: Move, player: Player): DetectedTactic? {
         val piece = move.pieceMoved ?: return null
 
         // Simulate entirely on tempBoard
@@ -368,7 +448,15 @@ class TacticsRecognizer @Inject constructor(
         Log.d(TAG, "isDoubleCheck: attackers are $attackers")
 
         // No need to undo — tempBoard is a clone
-        return if (attackers.size >= 2) "Double Check" else null
+        if (attackers.size < 2) return null
+
+        // Positions synced by getAlivePieces above — safe to read.
+        return DetectedTactic(
+            name = "Double Check",
+            description = "Double check: the ${label(attackers[0], attackers[0].position)} and the " +
+                "${label(attackers[1], attackers[1].position)} both check the " +
+                "${colorWord(opponentColor)} King on ${kingPos.toAlgebraicNotation()}."
+        )
     }
 
 

@@ -3,7 +3,7 @@ package com.example.chess.domain.model
 import com.example.chess.data.model.AnalysisResult
 
 // Everything the AI game-summary prompt needs, pulled straight from an already-computed
-// AnalysisResult — mirrors MoveExplanationRequest.fromAnalysisResult's convention.
+// AnalysisResult.
 data class GameSummaryRequest(
     val pgn: String,
     val totalMoves: Int,
@@ -44,7 +44,7 @@ data class GameSummaryRequest(
                 blackAccuracy = summary.blackAccuracy,
                 whiteCategoryCounts = result.whiteCategoryCounts,
                 blackCategoryCounts = result.blackCategoryCounts,
-                distinctTactics = result.tactics.flatten().distinct(),
+                distinctTactics = result.tactics.flatten().map { it.name }.distinct(),
                 missedMateCount = result.missedMates.count { it != null },
                 criticalMoveIndex = criticalIndex,
                 criticalMoveNumber = criticalIndex + 1,

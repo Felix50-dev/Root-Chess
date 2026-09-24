@@ -1,46 +1,17 @@
 package com.example.chess.domain.model
 
-import com.example.chess.data.model.AnalysisResult
-
 data class MoveExplanationRequest(
     val type: String,               // "Best", "Blunder", "Mistake", "Brilliant" etc.
-    val movePlayed: String,         // SAN notation e.g. "Nf6"
-    val bestMove: String?,          // Stockfish best move in SAN
+    val movePlayed: String,         // UCI coordinate notation e.g. "g1f3" ("e7e8q" for promotion)
+    val bestMove: String?,          // Stockfish best move, UCI coordinate notation
     val chessPiece: String?,        // piece involved in capture opportunity
-    val evalDelta: Float,           // centipawn loss from player's perspective
-    val tactic: List<String>?,      // from TacticsRecognizer e.g. ["Fork", "Pin"]
+    val evalDelta: Float,           // pawns, negative = the move lost ground
+    val tactic: List<DetectedTactic>?, // from TacticsRecognizer; descriptions are rendered as Facts
     val mateIn: Int?,               // if MissedMate, how many moves
     val matingPiece: String?,       // piece that delivers mate
+    val allowedMateIn: Int? = null, // mate this move newly allowed AGAINST the mover (see MoveInsight)
     val facts: List<String>,        // deterministic, verified facts about the position/move — see ExplanationFacts
     val playerElo: Int,             // for explanation depth calibration
-    val moveNumber: Int,            // move number in the game
+    val moveNumber: Int,            // full-move number in the game (White+Black share one)
     val playerColor: String         // "White" or "Black"
-) {
-    companion object {
-        // Convenience builder that pulls directly from your AnalysisResult
-        fun fromAnalysisResult(
-            index: Int,
-            result: AnalysisResult,
-            facts: List<String>,
-            playerElo: Int
-        ): MoveExplanationRequest {
-            val missedMate = result.missedMates.getOrNull(index)
-            val captureOpportunity = result.captureOpportunity.getOrNull(index)
-
-            return MoveExplanationRequest(
-                type = result.moveCategories.getOrNull(index) ?: "Best",
-                movePlayed = result.bestMoves.getOrNull(index) ?: "",
-                bestMove = result.bestMoves.getOrNull(index),
-                chessPiece = captureOpportunity?.target?.toString(),
-                evalDelta = result.losses.getOrNull(index)?.toFloat() ?: 0f,
-                tactic = result.tactics.getOrNull(index),
-                mateIn = missedMate?.mateInBefore,
-                matingPiece = missedMate?.moveObject?.pieceMoved?.toString(),
-                facts = facts,
-                playerElo = playerElo,
-                moveNumber = index + 1,
-                playerColor = if (index % 2 == 0) "White" else "Black"
-            )
-        }
-    }
-}
+)
