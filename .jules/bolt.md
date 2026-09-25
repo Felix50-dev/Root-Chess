@@ -1,0 +1,3 @@
+## 2026-09-25 - Direct O(1) Boundary Checks for Position Validation
+**Learning:** `Board.isValidPosition` previously scanned all 64 board squares in nested loops and performed object equality checks for `Spot.position == position` without early exit. Direct boundary checks on row/column coordinates (`position.row in 0 until NUM_ROWS && position.column in 0 until NUM_COLUMNS`) convert O(NUM_ROWS * NUM_COLUMNS) checks to O(1) without object allocation or matrix traversal.
+**Action:** Always check if spatial matrix lookup loops can be replaced by direct range boundary checks on coordinate values.
