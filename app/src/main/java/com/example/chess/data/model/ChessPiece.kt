@@ -170,15 +170,15 @@ class Rook(
     }
 
     private fun isPathClear(board: Board, start: Position, end: Position): Boolean {
-        // Check if the path from start to end is clear of obstacles (other pieces)
-        // Check if the path from start to end is clear of obstacles (other pieces)
+        // Optimization: Use direct 2D matrix indexing on board.boxes to eliminate getBox call overhead and bounds checks during ray-casting
+        val boxes = board.boxes
         if (start.row == end.row) {
             // Moving horizontally (same row)
             val minColumn = min(start.column, end.column)
             val maxColumn = max(start.column, end.column)
+            val rowSpots = boxes[start.row]
             for (column in (minColumn + 1) until maxColumn) {
-                val spot = board.getBox(start.row, column)
-                if (spot.chessPiece != null) {
+                if (rowSpots[column].chessPiece != null) {
                     return false // Path is obstructed by a piece
                 }
             }
@@ -186,9 +186,9 @@ class Rook(
             // Moving vertically (same column)
             val minRow = min(start.row, end.row)
             val maxRow = max(start.row, end.row)
+            val colIndex = start.column
             for (row in (minRow + 1) until maxRow) {
-                val spot = board.getBox(row, start.column)
-                if (spot.chessPiece != null) {
+                if (boxes[row][colIndex].chessPiece != null) {
                     return false // Path is obstructed by a piece
                 }
             }
@@ -264,12 +264,12 @@ class Bishop(
         val rowIncrement = if (rowDiff > 0) 1 else -1
         val colIncrement = if (colDiff > 0) 1 else -1
 
-        // Check each position along the diagonal path
+        // Optimization: Access board.boxes directly to avoid getBox bounds checking in loop
+        val boxes = board.boxes
         var currentRow = startRow + rowIncrement
         var currentCol = startCol + colIncrement
         while (currentRow != endRow && currentCol != endCol) {
-            val spot = board.getBox(currentRow, currentCol)
-            if (spot.chessPiece != null) {
+            if (boxes[currentRow][currentCol].chessPiece != null) {
                 // Path is obstructed by a piece
                 return false
             }
@@ -316,14 +316,15 @@ class Queen(
     }
 
     private fun isPathClear(board: Board, start: Position, end: Position): Boolean {
-        // Check if the path from start to end is clear of obstacles (other pieces)
+        // Optimization: Use direct 2D matrix indexing on board.boxes to eliminate getBox calls during ray-casting
+        val boxes = board.boxes
         if (start.row == end.row) {
             // Moving horizontally (same row)
             val minColumn = min(start.column, end.column)
             val maxColumn = max(start.column, end.column)
+            val rowSpots = boxes[start.row]
             for (column in (minColumn + 1) until maxColumn) {
-                val spot = board.getBox(start.row, column)
-                if (spot.chessPiece != null) {
+                if (rowSpots[column].chessPiece != null) {
                     return false // Path is obstructed by a piece
                 }
             }
@@ -331,9 +332,9 @@ class Queen(
             // Moving vertically (same column)
             val minRow = min(start.row, end.row)
             val maxRow = max(start.row, end.row)
+            val colIndex = start.column
             for (row in (minRow + 1) until maxRow) {
-                val spot = board.getBox(row, start.column)
-                if (spot.chessPiece != null) {
+                if (boxes[row][colIndex].chessPiece != null) {
                     return false // Path is obstructed by a piece
                 }
             }
@@ -344,8 +345,7 @@ class Queen(
             var currentRow = start.row + rowIncrement
             var currentCol = start.column + colIncrement
             while (currentRow != end.row && currentCol != end.column) {
-                val spot = board.getBox(currentRow, currentCol)
-                if (spot.chessPiece != null) {
+                if (boxes[currentRow][currentCol].chessPiece != null) {
                     return false // Path is obstructed by a piece
                 }
                 currentRow += rowIncrement
@@ -353,7 +353,7 @@ class Queen(
             }
         }
         // Path is clear or contains an opponent's piece
-        val endSpot = board.getBox(end.row, end.column)
+        val endSpot = boxes[end.row][end.column]
         return endSpot.chessPiece == null || endSpot.chessPiece!!.color != color
     }
 
@@ -470,15 +470,19 @@ class King(
     }
 
     private fun isUnderAttack(board: Board, position: Position, attackerColor: Color): Boolean {
-        // Iterate through all spots on the board
+        // Optimization: Cache targetSpot once outside loop and iterate board.boxes directly
+        // to eliminate 64 redundant getBox() calls and bounds checks per invocation
+        val targetSpot = board.boxes[position.row][position.column]
+        val boxes = board.boxes
         for (row in 0 until Board.NUM_ROWS) {
+            val rowSpots = boxes[row]
             for (col in 0 until Board.NUM_COLUMNS) {
-                val spot = board.getBox(row, col)
+                val spot = rowSpots[col]
                 val piece = spot.chessPiece
                 // Check if there is a piece on the spot and it belongs to the opponent
                 if (piece != null && piece.color != attackerColor) {
                     // Check if the opponent's piece can move to the target position
-                    if (piece.canMove(board, spot, board.getBox(position.row, position.column))) {
+                    if (piece.canMove(board, spot, targetSpot)) {
                         return true // The position is under attack
                     }
                 }
@@ -488,15 +492,19 @@ class King(
     }
 
     private fun isCheck(board: Board, attackerColor: Color): Boolean {
-        // Iterate through all spots on the board
+        // Optimization: Cache targetSpot once outside loop and iterate board.boxes directly
+        // to eliminate 64 redundant getBox() calls and bounds checks per invocation
+        val targetSpot = board.boxes[position.row][position.column]
+        val boxes = board.boxes
         for (row in 0 until Board.NUM_ROWS) {
+            val rowSpots = boxes[row]
             for (col in 0 until Board.NUM_COLUMNS) {
-                val spot = board.getBox(row, col)
+                val spot = rowSpots[col]
                 val piece = spot.chessPiece
                 // Check if there is a piece on the spot and it belongs to the opponent
                 if (piece != null && piece.color == attackerColor) {
                     // Check if the opponent's piece can move to the king's position
-                    if (piece.canMove(board, spot, board.getBox(position.row, position.column))) {
+                    if (piece.canMove(board, spot, targetSpot)) {
                         return true // The king is in check
                     }
                 }
