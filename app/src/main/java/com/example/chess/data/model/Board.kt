@@ -72,15 +72,14 @@ class Board @Inject constructor() {
     }
 
 
+    /**
+     * Checks if a given position is within the valid boundaries of the board (0..7 for row and column).
+     *
+     * Performance note: Optimized from O(NUM_ROWS * NUM_COLUMNS) iteration over all spots
+     * down to an O(1) range check.
+     */
     fun isValidPosition(position: Position): Boolean {
-        var isPositionValid = false
-        for (row in 0 until NUM_ROWS) {
-            for (column in 0 until NUM_COLUMNS) {
-                if (boxes[row][column].position == position
-                ) isPositionValid = true
-            }
-        }
-        return isPositionValid
+        return position.row in 0 until NUM_ROWS && position.column in 0 until NUM_COLUMNS
     }
 
 
