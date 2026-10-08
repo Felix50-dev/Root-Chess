@@ -1064,20 +1064,14 @@ fun Panel(
     }
 }
 
+// Optimized: Access piece.value directly and use direct index iteration to eliminate Map creation, filterNotNull List allocation, and lambda overhead during UI recomposition.
 fun calculateMaterialAdvantage(lostPieces: List<ChessPiece?>): Int {
-    val pieceValues = mapOf(
-        R.drawable.pawn_white to 1, R.drawable.pawn_dark to 1,
-        R.drawable.knight_white to 3, R.drawable.knight_dark to 3,
-        R.drawable.bishop_white to 3, R.drawable.bishop_dark to 3,
-        R.drawable.rook_white to 5, R.drawable.rook_dark to 5,
-        R.drawable.queen_white to 9, R.drawable.queen_dark to 9,
-        R.drawable.king_white to 0, R.drawable.king_dark to 0 // Kings don’t count
-    )
-
     var whiteAdvantage = 0 // Positive means White is ahead, negative means Black is ahead
 
-    lostPieces.filterNotNull().forEach { piece ->
-        val value = pieceValues[piece.vectorAsset] ?: 0
+    for (i in lostPieces.indices) {
+        val piece = lostPieces[i] ?: continue
+        if (piece is King) continue // Kings don't count towards material advantage
+        val value = piece.value
         when (piece.color) {
             com.example.chess.data.model.Color.WHITE -> whiteAdvantage -= value // White loses material
             com.example.chess.data.model.Color.BLACK -> whiteAdvantage += value // Black loses material
