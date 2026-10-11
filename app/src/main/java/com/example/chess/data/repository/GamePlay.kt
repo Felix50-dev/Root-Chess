@@ -599,7 +599,7 @@ class GamePlay @Inject constructor(
             if (selectedPiece.color == playerColor) {
                 for (row in 0 until Board.NUM_ROWS) {
                     for (col in 0 until Board.NUM_COLUMNS) {
-                        val endPosition = Position(row, col)
+                        val endPosition = Position.of(row, col)
                         val endSpot = board.getBox(endPosition.row, endPosition.column)
                         if (selectedPiece.canMove(
                                 board = board,
@@ -734,7 +734,7 @@ class GamePlay @Inject constructor(
                 if (myBoard.getBox(row, col).chessPiece != null) {
                     if (playerColor == myBoard.getBox(row, col).chessPiece!!.color) {
                         val chessPiece = myBoard.getBox(row, col).chessPiece
-                        val chessPiecePosition = Position(row, col)
+                        val chessPiecePosition = Position.of(row, col)
                         chessPiece!!.position = chessPiecePosition
                         availablePieces += chessPiece
                     }
@@ -829,7 +829,7 @@ class GamePlay @Inject constructor(
             //movesPlayed.remove(move)
         } else if (move.isEnPassant) {
             // Calculate the position of the captured pawn based on the end spot
-            val capturedPawnPosition = Position(startSpot.position.row, endSpot.position.column)
+            val capturedPawnPosition = Position.of(startSpot.position.row, endSpot.position.column)
 
             // Get the spot of the captured pawn
             val capturedPawnSpot =
@@ -906,7 +906,7 @@ class GamePlay @Inject constructor(
             Log.d(TAG, "undoMove: piece removed is: $move")
         } else if (move.isEnPassant) {
             // Calculate the position of the captured pawn based on the end spot
-            val capturedPawnPosition = Position(startSpot.position.row, endSpot.position.column)
+            val capturedPawnPosition = Position.of(startSpot.position.row, endSpot.position.column)
 
             // Get the spot of the captured pawn
             val capturedPawnSpot =
@@ -985,7 +985,7 @@ class GamePlay @Inject constructor(
             movesPlayed.remove(move)
         } else if (move.isEnPassant) {
             // Calculate the position of the captured pawn based on the end spot
-            val capturedPawnPosition = Position(startSpot.position.row, endSpot.position.column)
+            val capturedPawnPosition = Position.of(startSpot.position.row, endSpot.position.column)
 
             // Get the spot of the captured pawn
             val capturedPawnSpot =
