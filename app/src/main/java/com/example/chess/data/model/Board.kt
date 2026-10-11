@@ -20,25 +20,26 @@ class Board @Inject constructor() {
     fun resetBoard(): List<List<Spot>> {
         return List(8) { row ->
             List(8) { col ->
+                val pos = Position.of(row, col)
                 when (row) {
                     0 -> createPieceSpot(row, col, Color.BLACK) // Black pieces
-                    1 -> Spot(Position(row, col), Pawn(Color.BLACK, Position(row, col), isKilled = false)) // Black pawns
-                    6 -> Spot(Position(row, col), Pawn(Color.WHITE, Position(row, col), isKilled = false)) // White pawns
+                    1 -> Spot(pos, Pawn(Color.BLACK, pos, isKilled = false)) // Black pawns
+                    6 -> Spot(pos, Pawn(Color.WHITE, pos, isKilled = false)) // White pawns
                     7 -> createPieceSpot(row, col, Color.WHITE) // White pieces
-                    else -> Spot(Position(row, col), null) // Empty spots
+                    else -> Spot(pos, null) // Empty spots
                 }
             }
         }
     }
 
     private fun createPieceSpot(row: Int, col: Int, color: Color): Spot {
-        val position = Position(row, col)
+        val position = Position.of(row, col)
         val piece = when (col) {
             0, 7 -> Rook(color, position, isKilled = false)
             1, 6 -> Knight(color, position, isKilled = false)
             2, 5 -> Bishop(color, position, isKilled = false)
-            3 -> if (color == Color.BLACK) Queen(color, position, isKilled = false) else Queen(color, position, isKilled = false)
-            4 -> if (color == Color.BLACK) King(color, position, isKilled = false) else King(color, position, isKilled = false)
+            3 -> Queen(color, position, isKilled = false)
+            4 -> King(color, position, isKilled = false)
             else -> null
         }
         return Spot(position, piece)
@@ -51,8 +52,8 @@ class Board @Inject constructor() {
         // Create a deep copy of the `boxes` property
         val clonedBoxes = boxes.map { row ->
             row.map { spot ->
-                // Clone the Spot
-                val clonedPosition = Position(spot.position.row, spot.position.column)
+                // Clone the Spot with cached Position instance
+                val clonedPosition = Position.of(spot.position.row, spot.position.column)
                 val clonedPiece = spot.chessPiece?.let { piece ->
                     when (piece) {
                         is Pawn -> Pawn(piece.color, clonedPosition, piece.isKilled)
@@ -72,15 +73,9 @@ class Board @Inject constructor() {
     }
 
 
+    // Optimized O(1) position validity check, replacing the O(N^2) 64-iteration loop
     fun isValidPosition(position: Position): Boolean {
-        var isPositionValid = false
-        for (row in 0 until NUM_ROWS) {
-            for (column in 0 until NUM_COLUMNS) {
-                if (boxes[row][column].position == position
-                ) isPositionValid = true
-            }
-        }
-        return isPositionValid
+        return position.row in 0 until NUM_ROWS && position.column in 0 until NUM_COLUMNS
     }
 
 
@@ -89,4 +84,3 @@ class Board @Inject constructor() {
         const val NUM_COLUMNS: Int = 8
     }
 }
-
