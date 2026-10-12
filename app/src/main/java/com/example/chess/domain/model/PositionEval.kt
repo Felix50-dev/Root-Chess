@@ -8,4 +8,5 @@ data class PositionEval(
     val depth: Int,
     val secondBestScore: Int? = null,  // MultiPV line 2 eval, same perspective as score
     val secondBestMove: String? = null,  // MultiPV line 2 best move
+    val secondBestMateIn: Int? = null,  // MultiPV line 2 mate distance, if that line is mate
 )

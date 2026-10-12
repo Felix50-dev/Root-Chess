@@ -2,6 +2,7 @@ package com.example.chess.data.remote
 
 import com.example.chess.BuildConfig
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
@@ -12,6 +13,46 @@ import javax.inject.Inject
 // Carries the HTTP status code so callers can react to specific failures (e.g. 429
 // rate-limiting) without string-matching the exception message.
 class GroqApiException(val statusCode: Int, message: String) : Exception(message)
+
+private const val MAX_ATTEMPTS = 2
+private const val MIN_BACKOFF_MS = 500L
+private const val MAX_BACKOFF_MS = 5000L
+private const val DEFAULT_RATE_LIMIT_BACKOFF_MS = 1200L
+private const val DEFAULT_SERVER_ERROR_BACKOFF_MS = 800L
+
+// Groq's 429 body embeds its own cooldown hint, e.g. "...Please try again in 3.7725s...".
+// Real example observed: {"error":{"message":"Rate limit reached for model ... on tokens
+// per minute (TPM): Limit 8000, Used 7568, Requested 935. Please try again in 3.7725s. ..."}}
+private val RETRY_AFTER_HINT = Regex("""Please try again in ([\d.]+)s""")
+
+// One retry, on transient server-side failures only. NOT retried: other 4xx (persistent
+// client/auth/model-name errors — a retry fails identically) and IOException/timeouts (the
+// per-attempt connect/read timeout below already burned the full budget once; retrying a
+// stall doubles worst-case latency for the failure mode least likely to resolve in seconds).
+internal suspend fun <T> retryWithBackoff(
+    delay: suspend (Long) -> Unit = ::delay,
+    block: suspend (attempt: Int) -> T,
+): T {
+    var attempt = 1
+    while (true) {
+        try {
+            return block(attempt)
+        } catch (e: GroqApiException) {
+            if (attempt >= MAX_ATTEMPTS || !isRetryable(e.statusCode)) throw e
+            delay(backoffMillisFor(e))
+            attempt++
+        }
+    }
+}
+
+private fun isRetryable(statusCode: Int): Boolean = statusCode == 429 || statusCode in 500..599
+
+private fun backoffMillisFor(e: GroqApiException): Long {
+    if (e.statusCode != 429) return DEFAULT_SERVER_ERROR_BACKOFF_MS
+    val hintSeconds = RETRY_AFTER_HINT.find(e.message ?: "")?.groupValues?.get(1)?.toDoubleOrNull()
+    val hintMillis = hintSeconds?.let { (it * 1000).toLong() }
+    return (hintMillis ?: DEFAULT_RATE_LIMIT_BACKOFF_MS).coerceIn(MIN_BACKOFF_MS, MAX_BACKOFF_MS)
+}
 
 // Free-tier, OpenAI-compatible chat completions API (https://console.groq.com/docs/api-reference).
 // Hosts open-source models — no per-call billing, no prepay wall, unlike the Gemini API this
@@ -86,7 +127,7 @@ class GroqApi @Inject constructor() {
     }
 
     private suspend fun executeChatCompletion(requestBody: JSONObject): String =
-        withContext(Dispatchers.IO) {
+        retryWithBackoff { withContext(Dispatchers.IO) {
             val url = "https://api.groq.com/openai/v1/chat/completions"
             val connection = (URL(url).openConnection() as HttpURLConnection).apply {
                 requestMethod = "POST"
@@ -114,7 +155,7 @@ class GroqApi @Inject constructor() {
                 .getJSONObject(0)
                 .getJSONObject("message")
                 .getString("content")
-        }
+        } }
 
     private companion object {
         // Verified against this account's actual GET /openai/v1/models response —

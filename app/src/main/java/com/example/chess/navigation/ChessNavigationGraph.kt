@@ -12,25 +12,28 @@ import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.navArgument
-import com.example.chess.data.model.AILevel
+import com.example.chess.data.model.BotCatalog
 import com.example.chess.data.model.GameMode
 import com.example.chess.presentation.BoardAnalysisScreen
 import com.example.chess.payments.presentation.PaywallScreen
+import com.example.chess.presentation.BotDetailScreen
 import com.example.chess.presentation.ChatScreen
 import com.example.chess.presentation.ChatViewModel
 import com.example.chess.presentation.ChessAnalysisScreen
 import com.example.chess.presentation.ChessGameScreen
 import com.example.chess.presentation.ChessGameViewModel
-import com.example.chess.presentation.ComputerModeScreen
 import com.example.chess.presentation.HomeScreen
 import com.example.chess.presentation.PuzzleListScreen
 import com.example.chess.presentation.PuzzleScreen
+import com.example.chess.presentation.RoadmapScreen
+import com.example.chess.presentation.RoadmapViewModel
 
 object RootChessDestinations {
     const val HOME_ROUTE = "home"
     const val PLAY_WITH_FRIEND_ROUTE = "friend"
     const val PLAY_WITH_COMPUTER_ROUTE = "computer"
-    const val OTHER_ROUTE = "other"
+    const val ROADMAP_ROUTE = "roadmap"
+    const val BOT_DETAIL_ROUTE = "bot_detail/{botId}"
     const val ANALYSIS_ROUTE = "analysis"
     const val REVIEW_GAME_ROUTE = "review"
     const val PUZZLE_LIST_ROUTE = "puzzles"
@@ -61,7 +64,7 @@ fun RootChessNavHost(
                 },
                 onPlayWithComputer = {
                     viewModel.setGameMode(GameMode.COMPUTER)
-                    navController.navigate(RootChessDestinations.OTHER_ROUTE)
+                    navController.navigate(RootChessDestinations.ROADMAP_ROUTE)
                 },
                 onOpenPuzzles = {
                     navController.navigate(RootChessDestinations.PUZZLE_LIST_ROUTE)
@@ -88,12 +91,32 @@ fun RootChessNavHost(
         }
 
         composable(
-            route = RootChessDestinations.OTHER_ROUTE
+            route = RootChessDestinations.ROADMAP_ROUTE
         ) {
-            ComputerModeScreen(
-                onBack = { navController.popBackStack() }
-            ) { level, isWhite ->
-                if (level == 1) viewModel.setAILevel(AILevel.LEVEL1) else viewModel.setAILevel(AILevel.LEVEL2)
+            val roadmapViewModel = hiltViewModel<RoadmapViewModel>()
+            val roadmapState by roadmapViewModel.roadmapState.collectAsStateWithLifecycle()
+            val rating by roadmapViewModel.playerRating.collectAsStateWithLifecycle()
+            RoadmapScreen(
+                state = roadmapState,
+                rating = rating,
+                onBotSelected = { botId ->
+                    navController.navigate("bot_detail/$botId")
+                },
+                onBack = { navController.popBackStack() },
+            )
+        }
+
+        composable(
+            route = RootChessDestinations.BOT_DETAIL_ROUTE,
+            arguments = listOf(navArgument("botId") { type = NavType.StringType })
+        ) { backStackEntry ->
+            val botId = backStackEntry.arguments?.getString("botId") ?: return@composable
+            val bot = BotCatalog.bots.firstOrNull { it.id == botId } ?: return@composable
+            BotDetailScreen(
+                bot = bot,
+                onBack = { navController.popBackStack() },
+            ) { isWhite ->
+                viewModel.setBot(bot)
                 viewModel.setColor(isWhite)
                 navController.navigate(RootChessDestinations.PLAY_WITH_COMPUTER_ROUTE)
             }

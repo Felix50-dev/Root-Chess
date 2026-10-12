@@ -5,4 +5,13 @@
              doesn't flash a mismatched color on cold start. -->
         <item name="android:windowBackground">@color/brand_cream</item>
     </style>
+
+    <!-- Cold-start splash theme, applied only to MainActivity. Light/default variant:
+         cream background + brown mark, matching the app's light M3 scheme. The dark
+         variant lives in values-night/themes.xml. -->
+    <style name="Theme.Chess.Starting" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@color/brand_cream</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/ic_splash_icon_light</item>
+        <item name="postSplashScreenTheme">@style/Theme.Chess</item>
+    </style>
 </resources>

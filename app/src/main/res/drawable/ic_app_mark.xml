@@ -1,0 +1,13 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Same king mark geometry as ic_launcher_foreground.xml, for in-app use (e.g. the
+         top bar). Fill is a neutral placeholder — callers tint it via Icon(tint = ...). -->
+    <path
+        android:fillColor="#FF000000"
+        android:pathData="M56.21,22 C56.872,22 57.41,22.537 57.41,23.2 V28.83 H60.68 C61.233,28.83 61.68,29.278 61.68,29.83 V31.24 C61.68,31.792 61.232,32.24 60.68,32.24 H57.41 V38.72 C57.41,39.383 56.872,39.92 56.21,39.92 H51.79 C51.127,39.92 50.59,39.383 50.59,38.72 V32.24 H47.32 C46.768,32.24 46.32,31.792 46.32,31.24 V29.83 C46.32,29.278 46.768,28.83 47.32,28.83 H50.59 V23.2 C50.59,22.537 51.127,22 51.79,22 H56.21 Z
+                           M62.533,48.455 C62.533,53.169 58.714,56.988 54,56.988 C49.286,56.988 45.467,53.169 45.467,48.455 C45.467,43.741 49.286,39.922 54,39.922 C58.714,39.922 62.533,43.741 62.533,48.455 Z
+                           M45.467,55.28 L62.533,55.28 L72.773,79.173 C72.774,82.944 69.718,86 65.947,86 L42.053,86 C38.282,86 35.226,82.944 35.226,79.173 Z" />
+</vector>

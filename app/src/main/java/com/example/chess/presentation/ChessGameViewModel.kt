@@ -9,13 +9,14 @@ import androidx.lifecycle.viewModelScope
 import com.example.chess.R
 import com.example.chess.data.local.PuzzleDao
 import com.example.chess.data.local.PuzzleEntity
-import com.example.chess.data.model.AILevel
 import com.example.chess.data.model.AnalysisResult
 import com.example.chess.data.model.Board
+import com.example.chess.data.model.BotProfile
 import com.example.chess.data.model.ChessPiece
 import com.example.chess.data.model.Color
 import com.example.chess.data.model.Feedback
 import com.example.chess.data.model.GameMode
+import com.example.chess.data.model.GameOutcome
 import com.example.chess.data.model.GameStatus
 import com.example.chess.data.model.Pawn
 import com.example.chess.data.model.Player
@@ -27,6 +28,7 @@ import com.example.chess.data.remote.GroqApiException
 import com.example.chess.data.repository.GamePlay
 import com.example.chess.data.repository.GameSummaryGenerator
 import com.example.chess.data.repository.MoveExplainer
+import com.example.chess.data.repository.RoadmapProgressRepository
 import com.example.chess.domain.AiExplanationGate
 import com.example.chess.domain.GateResult
 import com.example.chess.domain.model.DetectedTactic
@@ -52,6 +54,17 @@ import javax.inject.Inject
  
 private const val TAG = "ChessGameViewModel"
 
+// How long a 429-triggered AI disablement lasts before auto-recovering. Matches Groq's
+// own per-minute rate-limit window (see GroqApi's retry backoff) — the constraint clears
+// on its own well within this window, so there's no reason to stay disabled longer.
+private const val AI_DISABLE_COOLDOWN_MS = 60_000L
+
+// Delay before actually sending a per-move explanation request. GroqApi's HTTP call is
+// blocking, not suspending, so cancelling a previous explanationJob can't interrupt it
+// once it's in flight — only this delay (a real suspension point) stops the request from
+// being sent at all when the user navigates past a move faster than this window.
+private const val AI_EXPLANATION_DEBOUNCE_MS = 350L
+
 @HiltViewModel
 class ChessGameViewModel @Inject constructor(
     private val game: GamePlay,
@@ -59,6 +72,7 @@ class ChessGameViewModel @Inject constructor(
     private val gameSummaryGenerator: GameSummaryGenerator,
     private val puzzleDao: PuzzleDao,
     private val aiExplanationGate: AiExplanationGate,
+    private val roadmapProgressRepository: RoadmapProgressRepository,
     @ApplicationContext context: Context
 ) : ViewModel() {
 
@@ -108,9 +122,14 @@ class ChessGameViewModel @Inject constructor(
     private val _color = MutableStateFlow(true)
     val color: StateFlow<Boolean> = _color.asStateFlow()
 
-    //level selected
-    private val _level = MutableStateFlow(AILevel.LEVEL1)
-    val level: StateFlow<AILevel> = _level.asStateFlow()
+    //bot selected from the roadmap — null in FRIEND mode, never defaulted
+    private val _currentBot = MutableStateFlow<BotProfile?>(null)
+    val currentBot: StateFlow<BotProfile?> = _currentBot.asStateFlow()
+
+    // Guards recordGameResult() against firing more than once per game — boardState keeps
+    // emitting the same terminal GameStatus on every subsequent recomposition-triggering
+    // update. Reset wherever a fresh game starts: startNewGame() and setColor().
+    private var gameResultRecorded = false
 
     //game mode
     private val _gameMode = MutableStateFlow(GameMode.FRIEND)
@@ -194,13 +213,17 @@ class ChessGameViewModel @Inject constructor(
     // exactly as categorizeByLoss/analyzeSingleMove label them.
     private val threatProbeCategories = setOf("Blunder", "Mistake", "Miss", "MissedMate")
 
-    // Set once a Groq call fails with a quota/rate-limit error (HTTP 429), so we stop
-    // firing a doomed network request (and its CPU/IO cost) on every remaining move step
-    // for the rest of this session. Exposed publicly so the UI can tell the user AI
-    // commentary has fallen back to deterministic insight text, instead of silently
-    // showing the same-looking feedback either way.
+    // Set once a Groq call fails with a quota/rate-limit error (HTTP 429) even after
+    // GroqApi's own retry, so we stop firing a doomed network request (and its CPU/IO
+    // cost) on every remaining move step — but only for AI_DISABLE_COOLDOWN_MS, not the
+    // rest of the session: Groq's own 429 body reports a per-minute token limit, which
+    // clears on its own well within a minute. aiExplanationCooldownJob flips this back to
+    // false on a timer so the UI recovers without the user restarting anything. Exposed
+    // publicly so the UI can tell the user AI commentary has fallen back to deterministic
+    // insight text, instead of silently showing the same-looking feedback either way.
     private val _aiExplanationDisabled = MutableStateFlow(false)
     val aiExplanationDisabled: StateFlow<Boolean> = _aiExplanationDisabled.asStateFlow()
+    private var aiExplanationCooldownJob: Job? = null
 
     // Tracks the in-flight AI game-summary coroutine, mirroring explanationJob.
     private var gameSummaryJob: Job? = null
@@ -208,10 +231,11 @@ class ChessGameViewModel @Inject constructor(
     // Separate from _aiExplanationDisabled — the per-move feature fires on every
     // Next/Previous step (many calls per review session) while this fires at most once
     // per analyzed game. Sharing one flag would let a 429 from one feature prematurely
-    // and permanently disable the other for the rest of this shared VM's lifetime
-    // (which spans multiple games).
+    // disable the other for the same cooldown window. Same self-resetting-cooldown
+    // behavior as _aiExplanationDisabled — see that flag's comment.
     private val _aiSummaryDisabled = MutableStateFlow(false)
     val aiSummaryDisabled: StateFlow<Boolean> = _aiSummaryDisabled.asStateFlow()
+    private var aiSummaryCooldownJob: Job? = null
 
     // Incremented once per analyzeGame() call; captured locally at launch time and
     // compared on completion so a late-arriving AI summary from a previous game (in
@@ -260,6 +284,32 @@ class ChessGameViewModel @Inject constructor(
         viewModelScope.launch {
             game.stockfish.startStockfish("${context.applicationInfo.nativeLibraryDir}/lib_chess.so")
             game.stockfish.sendCommand("uci")
+        }
+    }
+
+    // Captures the roadmap rating update at the moment a COMPUTER game actually ends —
+    // independent of whether the player ever opens post-game analysis (see analyzeGame()'s
+    // separate, optional applyAccuracyBonus call for the analysis-driven star upgrade).
+    // Deliberately keyed on GameStatus, not isGameOver: quitGame() sets isGameOver without
+    // ever producing a terminal GameStatus, so abandoning a game via Exit correctly never
+    // records a result.
+    init {
+        viewModelScope.launch {
+            boardState.collect { state ->
+                if (_gameMode.value != GameMode.COMPUTER || gameResultRecorded) return@collect
+                val outcome = when (state.gameStatus) {
+                    GameStatus.WHITE_WIN -> if (_color.value) GameOutcome.WIN else GameOutcome.LOSS
+                    GameStatus.BLACK_WIN -> if (_color.value) GameOutcome.LOSS else GameOutcome.WIN
+                    GameStatus.STALEMATE -> GameOutcome.DRAW
+                    else -> return@collect
+                }
+                gameResultRecorded = true
+                _currentBot.value?.let { bot ->
+                    viewModelScope.launch(Dispatchers.IO) {
+                        roadmapProgressRepository.recordGameResult(bot.id, outcome)
+                    }
+                }
+            }
         }
     }
 
@@ -380,8 +430,8 @@ class ChessGameViewModel @Inject constructor(
         _visualPieces.value = updated
     }
 
-    fun setAILevel(aiLevel: AILevel) {
-        _level.value = aiLevel
+    fun setBot(bot: BotProfile) {
+        _currentBot.value = bot
     }
 
     // game.movesPlayed/piecesKilled are mutated from Dispatchers.Default (AI move handling)
@@ -414,6 +464,7 @@ class ChessGameViewModel @Inject constructor(
     fun setColor(isWhite: Boolean) {
         _color.value = isWhite
         isPromotionPending = false
+        gameResultRecorded = false
 
         if (_gameMode.value == GameMode.COMPUTER) {
             val (updatedWhitePlayer, updatedDarkPlayer) = playersForCurrentMode()
@@ -457,6 +508,14 @@ class ChessGameViewModel @Inject constructor(
                 _gameSummary.value = result.gameSummary
                 savePuzzlesFromBlunders(result.insights)
                 launchAiGameSummary(result, sessionId)
+                if (_gameMode.value == GameMode.COMPUTER) {
+                    val accuracy = if (_color.value) result.whiteAccuracy else result.blackAccuracy
+                    _currentBot.value?.let { bot ->
+                        viewModelScope.launch(Dispatchers.IO) {
+                            roadmapProgressRepository.applyAccuracyBonus(bot.id, accuracy)
+                        }
+                    }
+                }
             } catch (e: Exception) {
                 Log.e(TAG, "analyzeGame: analysis failed", e)
                 _analysisError.value = true
@@ -494,7 +553,8 @@ class ChessGameViewModel @Inject constructor(
             Log.d(TAG, "AI turn started: ${player.playerType}")
             delay(MOVE_ANIMATION_TIME)
             if (isPromotionPending) return
-            game.handleAIMove(player, _level.value)
+            val bot = _currentBot.value ?: return
+            game.handleAIMove(player, bot)
             syncVisualPiecesWithBoard(game.board)
             val aiLastMove = game.aiLastMove
             val isCapture = aiLastMove?.pieceKilled != null
@@ -588,6 +648,7 @@ class ChessGameViewModel @Inject constructor(
     }
 
     fun startNewGame() {
+        gameResultRecorded = false
         viewModelScope.launch {
             val (whitePlayer, blackPlayer) = playersForCurrentMode()
             game.init(whitePlayer, blackPlayer, true)
@@ -864,11 +925,16 @@ class ChessGameViewModel @Inject constructor(
         undoReviewMove(move)
         syncVisualPiecesWithBoard(game.board, previousPositions)
 
-        val insight = _analysisResult.value?.insights?.getOrNull(prevIndex)
-        val sanMove = _movesToSimulateSAN.getOrNull(prevIndex) ?: ""
+        // The insight/feedback shown for counter value N always describes the move that
+        // PRODUCED position N (nextMoveInternal's convention: it shows insights[index] then
+        // sets the counter to index + 1). prevIndex is the move that was just undone to
+        // reach this position, not the move that led to it — that's one further back.
+        val insightIndex = prevIndex - 1
+        val insight = _analysisResult.value?.insights?.getOrNull(insightIndex)
+        val sanMove = _movesToSimulateSAN.getOrNull(insightIndex) ?: ""
         val category = insight?.category ?: "Best"
-        val bestMove = _analysisResult.value?.bestMoves?.getOrNull(prevIndex)
-        val played = _movesToSimulateSAN.getOrNull(prevIndex)
+        val bestMove = _analysisResult.value?.bestMoves?.getOrNull(insightIndex)
+        val played = _movesToSimulateSAN.getOrNull(insightIndex)
 
         _currentInsight.value = insight
         _currentMoveIndex.value = prevIndex
@@ -885,7 +951,7 @@ class ChessGameViewModel @Inject constructor(
                 insight?.bestMove else null
         )
 
-        insight?.let { launchAiExplanation(it, sanMove, prevIndex, expectedMoveIndex = prevIndex) }
+        insight?.let { launchAiExplanation(it, sanMove, insightIndex, expectedMoveIndex = prevIndex) }
 
         _boardState.value = _boardState.value.copy(
             board = game.board.clone(),
@@ -907,6 +973,11 @@ class ChessGameViewModel @Inject constructor(
         if (_aiExplanationDisabled.value) return
         explanationJob?.cancel()
         explanationJob = viewModelScope.launch {
+            // Debounce: if the user navigates past this move before this delay elapses,
+            // the cancel() above (on the next call) cuts us off right here — the request
+            // never gets sent at all, instead of being sent and its result discarded.
+            delay(AI_EXPLANATION_DEBOUNCE_MS)
+
             // Free tier: one AI-explained game per day. Checked inside the coroutine
             // (it suspends on DataStore); premium bypasses the quota entirely.
             when (aiExplanationGate.check(reviewGameKey)) {
@@ -952,12 +1023,13 @@ class ChessGameViewModel @Inject constructor(
                     moveNumber = index / 2 + 1,
                     playerColor = if (index % 2 == 0) "White" else "Black",
                 )
-                // 15s matches GroqApi's own connect/read timeouts — this call is
-                // non-blocking (the deterministic insight is already shown), so a
-                // longer timeout just gives real network round trips a fair chance
-                // instead of cancelling before a cold TLS handshake + generation
-                // can complete.
-                val aiExplanation = withTimeout(15_000) {
+                // GroqApi retries once on a 429/5xx before giving up (see
+                // GroqApi.retryWithBackoff): worst case is a fast-failing first attempt +
+                // backoff (up to 5s) + a full 15s connect/read timeout on the second
+                // attempt, ~22s. This call is non-blocking (the deterministic insight is
+                // already shown), so 25s just gives a retry that was about to succeed
+                // room to land instead of cancelling it mid-flight.
+                val aiExplanation = withTimeout(25_000) {
                     moveExplainer.explain(request)
                 }
                 // Only update if still on the same move; a blank explanation would wipe
@@ -974,6 +1046,11 @@ class ChessGameViewModel @Inject constructor(
                 Log.e(TAG, "launchAiExplanation: AI explanation failed, using deterministic insight", e)
                 if (e is GroqApiException && e.statusCode == 429) {
                     _aiExplanationDisabled.value = true
+                    aiExplanationCooldownJob?.cancel()
+                    aiExplanationCooldownJob = viewModelScope.launch {
+                        delay(AI_DISABLE_COOLDOWN_MS)
+                        _aiExplanationDisabled.value = false
+                    }
                 }
             } finally {
                 _explanationLoading.value = false
@@ -1003,7 +1080,7 @@ class ChessGameViewModel @Inject constructor(
                         )
                     }
                     ?: return@launch
-                val generated = withTimeout(15_000) {
+                val generated = withTimeout(25_000) {
                     gameSummaryGenerator.generate(request)
                 }
                 // Staleness guard — discard if a newer analyzeGame() call has since
@@ -1018,6 +1095,11 @@ class ChessGameViewModel @Inject constructor(
                 Log.e(TAG, "launchAiGameSummary: AI game summary failed, using deterministic summary", e)
                 if (e is GroqApiException && e.statusCode == 429) {
                     _aiSummaryDisabled.value = true
+                    aiSummaryCooldownJob?.cancel()
+                    aiSummaryCooldownJob = viewModelScope.launch {
+                        delay(AI_DISABLE_COOLDOWN_MS)
+                        _aiSummaryDisabled.value = false
+                    }
                 }
             }
         }

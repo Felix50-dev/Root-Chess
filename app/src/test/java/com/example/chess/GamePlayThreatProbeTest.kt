@@ -32,7 +32,11 @@ class GamePlayThreatProbeTest {
         mateIn: Int = 0,
         secondBestScore: Int? = null,
         secondBestMove: String? = null,
-    ) = PositionEval(score, bestMove, mateIn, emptyList(), 12, secondBestScore, secondBestMove)
+        secondBestMateIn: Int? = null,
+    ) = PositionEval(
+        score, bestMove, mateIn, emptyList(), 12,
+        secondBestScore, secondBestMove, secondBestMateIn,
+    )
 
     @Test
     fun selectMeaningfulThreats_filtersSubThresholdAndKeepsGainers() {
@@ -55,6 +59,34 @@ class GamePlayThreatProbeTest {
         )
         assertEquals(1, threats.size)
         assertEquals(2, threats[0].mateIn)
+    }
+
+    @Test
+    fun selectMeaningfulThreats_secondPvMateIncludedRegardlessOfScore() {
+        // PV1 doesn't qualify on its own (score 0, no mate) but is still emitted since the
+        // threshold check is per-line; PV2 is mate-in-3 with a low synthesized-adjacent
+        // score (0) — must still be included, proving the threshold exemption applies to
+        // the second line the same way it does the first.
+        val threats = game.selectMeaningfulThreats(
+            eval(0, "h4f2", secondBestScore = 0, secondBestMove = "d8h4", secondBestMateIn = 3),
+            evalBeforeCp = 0,
+        )
+        assertEquals(1, threats.size)
+        assertEquals("d8h4", threats[0].uci)
+        assertEquals(3, threats[0].mateIn)
+    }
+
+    @Test
+    fun selectMeaningfulThreats_secondPvNonPositiveMateInNotExempt() {
+        // secondBestMateIn <= 0 (the second line's side-to-move is the one getting mated,
+        // or a stray non-positive value) must NOT be treated as a threat exemption — only a
+        // genuinely positive mate-in-N counts as the opponent threatening mate.
+        val threats = game.selectMeaningfulThreats(
+            eval(300, "g5f7", secondBestScore = 10, secondBestMove = "d8h4", secondBestMateIn = 0),
+            evalBeforeCp = 0,
+        )
+        assertEquals(1, threats.size)
+        assertEquals("g5f7", threats[0].uci)
     }
 
     @Test

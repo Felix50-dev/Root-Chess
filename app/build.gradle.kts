@@ -15,6 +15,7 @@ plugins {
     id("org.jetbrains.kotlin.android")
     id("com.google.dagger.hilt.android")
     kotlin("kapt")
+    id("io.github.takahirom.roborazzi")
     alias(libs.plugins.compose.compiler)
 }
 
@@ -135,6 +136,9 @@ android {
         // GamePlay logs via android.util.Log on nearly every step — let JVM unit tests
         // run through it with Log.* returning defaults instead of throwing "not mocked".
         unitTests.isReturnDefaultValues = true
+        // Required by Robolectric/Roborazzi so screenshot tests can resolve app resources
+        // (themes, drawables) when rendering composables on the host JVM.
+        unitTests.isIncludeAndroidResources = true
     }
 
     sourceSets {
@@ -159,6 +163,12 @@ val chessAbis = targetAbis
 fun registerPackageChessTask(variant: String, cmakeTypes: List<String>) =
     tasks.register("packageChessNativeExecutables$variant") {
         dependsOn("externalNativeBuild$variant")
+
+        // Without this, Gradle has no way to know -PtargetAbis changed between
+        // invocations and treats a prior run's output dir as still up-to-date, silently
+        // skipping the copy below and leaving lib_chess.so missing (or stale) for the
+        // ABI actually being built this time.
+        inputs.property("chessAbis", chessAbis)
 
         val outputDir = layout.buildDirectory.dir("generated/jniLibs/$variant")
         outputs.dir(outputDir)
@@ -196,6 +206,7 @@ dependencies {
     implementation("androidx.datastore:datastore-preferences:1.1.1")
 
     implementation("androidx.core:core-ktx:1.15.0")
+    implementation("androidx.core:core-splashscreen:1.0.1")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
     implementation("androidx.activity:activity-compose:1.10.1")
@@ -233,6 +244,16 @@ dependencies {
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.8.1")
     // PreferenceDataStoreFactory on the JVM for AiReviewQuotaManager tests
     testImplementation("androidx.datastore:datastore-preferences-core:1.1.1")
+
+    // Roborazzi — host-JVM Compose screenshot testing (Robolectric-based, no device needed)
+    testImplementation(platform("androidx.compose:compose-bom:2025.02.00"))
+    testImplementation("androidx.compose.ui:ui-test-junit4")
+    testImplementation("androidx.test.ext:junit:1.2.1")
+    testImplementation("org.robolectric:robolectric:4.17")
+    // Pinned to 1.60.0 to match the Roborazzi Gradle plugin version — see root
+    // build.gradle.kts comment for why (Kotlin 2.0.20 compatibility).
+    testImplementation("io.github.takahirom.roborazzi:roborazzi:1.60.0")
+    testImplementation("io.github.takahirom.roborazzi:roborazzi-compose:1.60.0")
     implementation(fileTree("libs") {
         include("*.jar", "*.so")
     })

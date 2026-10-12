@@ -9,6 +9,35 @@ import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
 
+// Thrown by explain()'s post-generation checks — deliberately NOT a GroqApiException, so it
+// can never match `e is GroqApiException && e.statusCode == 429` in ChessGameViewModel/
+// ChatViewModel's catch blocks and can never trip their disable-cooldown flags. A rejected
+// response is a content problem, not a rate-limit/network one — the caller's existing
+// deterministic-insight fallback already handles it correctly either way.
+class MoveExplanationValidationException(message: String) : IllegalStateException(message)
+
+// Catches a narrow, deterministic slice of hallucination: content the prompt explicitly
+// forbids but doesn't enforce, and references to squares that don't appear anywhere in the
+// Facts this response was supposed to be grounded in. This is NOT a semantic fact-checker —
+// it would not catch a response that only uses grounded squares/pieces but mischaracterizes
+// what a Fact actually says (e.g. calling a capture "an even trade" when the Fact states
+// "White can win material" — a real example found via manual audit). Reliably catching that
+// class needs something closer to an LLM-as-judge second pass; out of scope here.
+private val BANNED_PHRASES = listOf(
+    Regex("(?i)the engine prefers"),
+)
+
+// Coarse heuristics tuned against the ai_capture.log corpus gathered during the hallucination
+// audit — the prompt bans numeric evals/centipawns outright, so any digit shaped like a pawn
+// count or a raw eval ("+2.3", "1.5 pawns", "centipawns") is a leak, not a legitimate mention.
+private val NUMERIC_EVAL_LEAKS = listOf(
+    Regex("""[-+]?\d+[.,]\d+\s*pawns?"""),
+    Regex("(?i)centipawn"),
+    Regex("""[-+]\d+\.\d+"""),
+)
+
+private val SQUARE_TOKEN = Regex("""\b[a-h][1-8]\b""")
+
 @Singleton
 class MoveExplainer @Inject constructor(
     private val groqApi: GroqApi,
@@ -38,8 +67,56 @@ class MoveExplainer @Inject constructor(
         // treat that as a failure (the caller falls back to the deterministic insight) and
         // never cache it, so the next visit to this move retries.
         check(explanation.isNotBlank()) { "Groq returned a blank explanation" }
+        // Same not-cached-on-failure contract as the blank check above — rethrown before
+        // reaching the cache-store line, so the next visit to this move retries the network
+        // call rather than serving a rejected response forever.
+        try {
+            validate(explanation, request)
+        } catch (e: MoveExplanationValidationException) {
+            capture("=== MOVE ===\n$prompt\n--- VALIDATION FAILED ---\n${e.message}")
+            throw e
+        }
         explanationCache[prompt] = explanation
         return explanation
+    }
+
+    private fun validate(response: String, request: MoveExplanationRequest) {
+        BANNED_PHRASES.forEach { pattern ->
+            if (pattern.containsMatchIn(response)) {
+                throw MoveExplanationValidationException(
+                    "Response matches banned phrase ${pattern.pattern}: $response"
+                )
+            }
+        }
+        NUMERIC_EVAL_LEAKS.forEach { pattern ->
+            if (pattern.containsMatchIn(response)) {
+                throw MoveExplanationValidationException(
+                    "Response leaks a numeric evaluation (${pattern.pattern}): $response"
+                )
+            }
+        }
+        val grounded = groundedSquares(request)
+        val mentioned = SQUARE_TOKEN.findAll(response).map { it.value }.toSet()
+        val ungrounded = mentioned - grounded
+        if (ungrounded.isNotEmpty()) {
+            throw MoveExplanationValidationException(
+                "Response references square(s) $ungrounded not present in the Facts: $response"
+            )
+        }
+    }
+
+    // Every square mentioned anywhere the response is allowed to draw from: the Facts
+    // themselves, any detected tactic's (already fully-grounded, see DetectedTactic) prose
+    // description, and the two UCI move strings — covers 5-char promotion moves (e.g.
+    // "e7e8q") the same as plain 4-char ones, since the regex just finds both squares inside.
+    private fun groundedSquares(request: MoveExplanationRequest): Set<String> {
+        val text = buildString {
+            request.facts.forEach { appendLine(it) }
+            request.tactic?.forEach { appendLine(it.description) }
+            appendLine(request.movePlayed)
+            request.bestMove?.let { appendLine(it) }
+        }
+        return SQUARE_TOKEN.findAll(text).map { it.value }.toSet()
     }
 
     // TEMP-CAPTURE: file-based diagnostic for the explanation-regression investigation

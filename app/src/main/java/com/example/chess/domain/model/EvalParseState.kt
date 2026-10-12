@@ -9,4 +9,5 @@ data class EvalParseState(
     var done: Boolean = false,
     var secondBestScore: Int? = null,   // MultiPV line 2 eval
     var secondBestMove: String? = null, // MultiPV line 2 best move
+    var secondBestMateIn: Int? = null,  // MultiPV line 2 mate distance, if that line is mate
 )

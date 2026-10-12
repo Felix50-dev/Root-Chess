@@ -11,6 +11,7 @@ import com.example.chess.domain.model.ChatRole
 import com.example.chess.payments.domain.repository.EntitlementRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -20,11 +21,16 @@ import javax.inject.Inject
 
 private const val TAG = "ChatViewModel"
 
-// Larger than ChessGameViewModel's move-explanation timeout: this is the user's
-// primary, blocking action on this screen (they're waiting on a real answer with up
-// to 400 output tokens), not a background fill-in with a deterministic fallback.
-// Matches GroqApi's own connect/read timeouts (15s each).
-private const val SEND_TIMEOUT_MS = 15_000L
+// GroqApi now retries once on a 429/5xx before giving up (see GroqApi.retryWithBackoff):
+// worst case is roughly a fast-failing first attempt + backoff (up to 5s) + a full
+// 15s connect/read timeout on the second attempt, ~22s. 25s leaves headroom above that
+// so a retry that was about to succeed isn't cut off mid-flight.
+private const val SEND_TIMEOUT_MS = 25_000L
+
+// How long a 429-triggered chat disablement lasts before auto-recovering. Matches
+// Groq's own per-minute rate-limit window — see ChessGameViewModel's identical constant
+// and _aiExplanationDisabled comment for the full reasoning.
+private const val CHAT_DISABLE_COOLDOWN_MS = 60_000L
 
 @HiltViewModel
 class ChatViewModel @Inject constructor(
@@ -45,10 +51,14 @@ class ChatViewModel @Inject constructor(
     private val _isSending = MutableStateFlow(false)
     val isSending: StateFlow<Boolean> = _isSending.asStateFlow()
 
-    // Mirrors ChessGameViewModel's _aiExplanationDisabled — set on a 429 to stop
-    // hammering the API, surfaced to the UI to disable the send button/show a banner.
+    // Mirrors ChessGameViewModel's _aiExplanationDisabled — set on a 429 (after GroqApi's
+    // own retry is exhausted) to stop hammering the API, surfaced to the UI to disable
+    // the send button/show a banner. Self-resets after CHAT_DISABLE_COOLDOWN_MS via
+    // chatCooldownJob — the send button can't be tapped to trigger a lazy re-check, so
+    // the flag must flip back on its own.
     private val _chatDisabled = MutableStateFlow(false)
     val chatDisabled: StateFlow<Boolean> = _chatDisabled.asStateFlow()
+    private var chatCooldownJob: Job? = null
 
     private val _errorMessage = MutableStateFlow<String?>(null)
     val errorMessage: StateFlow<String?> = _errorMessage.asStateFlow()
@@ -83,6 +93,11 @@ class ChatViewModel @Inject constructor(
                 if (e is GroqApiException && e.statusCode == 429) {
                     _chatDisabled.value = true
                     _errorMessage.value = "The AI coach is rate-limited right now — please try again later."
+                    chatCooldownJob?.cancel()
+                    chatCooldownJob = viewModelScope.launch {
+                        delay(CHAT_DISABLE_COOLDOWN_MS)
+                        _chatDisabled.value = false
+                    }
                 } else {
                     _errorMessage.value = "Couldn't reach the AI coach. Please try again."
                 }

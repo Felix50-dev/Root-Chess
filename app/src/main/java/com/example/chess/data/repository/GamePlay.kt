@@ -4,10 +4,10 @@ import android.util.Log
 import androidx.annotation.VisibleForTesting
 import com.example.chess.R
 import com.example.chess.data.StockfishEngine
-import com.example.chess.data.model.AILevel
 import com.example.chess.data.model.AnalysisResult
 import com.example.chess.data.model.Bishop
 import com.example.chess.data.model.Board
+import com.example.chess.data.model.BotProfile
 import com.example.chess.data.model.CaptureOpportunity
 import com.example.chess.data.model.ChessPiece
 import com.example.chess.data.model.Color
@@ -694,8 +694,8 @@ class GamePlay @Inject constructor(
 
     // Filters the probe's PV lines down to threats that actually gain something. Scores are
     // from the probe's side to move (the opponent), whose standing eval is -evalBeforeCp,
-    // so score + evalBeforeCp is the gain the free move achieves. Mate threats on PV1 are
-    // threshold-exempt; PV2 mate threats are invisible (its parser captures cp only).
+    // so score + evalBeforeCp is the gain the free move achieves. Mate threats on either
+    // line are threshold-exempt — a forced mate matters regardless of its synthesized score.
     internal fun selectMeaningfulThreats(
         probeEval: PositionEval,
         evalBeforeCp: Int,
@@ -711,10 +711,12 @@ class GamePlay @Inject constructor(
         }
         val second = probeEval.secondBestMove
         val secondScore = probeEval.secondBestScore
-        if (second != null && isValidAlgebraicMove(second) && secondScore != null &&
-            secondScore + evalBeforeCp >= ThreatFacts.THREAT_GAIN_THRESHOLD_CP
-        ) {
-            threats += OpponentThreat(second, secondScore + evalBeforeCp, null)
+        val secondMateIn = probeEval.secondBestMateIn
+        if (second != null && isValidAlgebraicMove(second) && secondScore != null) {
+            val gain = secondScore + evalBeforeCp
+            if ((secondMateIn != null && secondMateIn > 0) || gain >= ThreatFacts.THREAT_GAIN_THRESHOLD_CP) {
+                threats += OpponentThreat(second, gain, secondMateIn?.takeIf { it > 0 })
+            }
         }
         return threats
     }
@@ -1640,7 +1642,7 @@ class GamePlay @Inject constructor(
         }
     }
 
-    suspend fun handleAIMove(player: Player, level: AILevel): Boolean =
+    suspend fun handleAIMove(player: Player, bot: BotProfile): Boolean =
         withContext(Dispatchers.Default) {
             try {
                 Log.d(TAG, "handleAIMove: started AI move")
@@ -1655,12 +1657,12 @@ class GamePlay @Inject constructor(
 
                 // Send the position and start Stockfish thinking
                 stockfish.sendCommand("position startpos moves $movesString")
-                stockfish.setDifficultyLevel(level.skillLevel)
+                stockfish.setDifficultyLevel(bot.skillLevel)
                 // Undo the MultiPV=2 a prior analysis run (evaluateAllPositions) may have
                 // left on this shared engine process — live play wants the full search
                 // budget on one line.
                 stockfish.sendCommand("setoption name MultiPV value 1")
-                stockfish.sendCommand("go movetime ${level.moveTimeMs}")
+                stockfish.sendCommand("go movetime ${bot.moveTimeMs}")
 
                 val bestMove = stockfish.getBestMove()
                 Log.d(TAG, "handleAIMove: moveByStockfish is $bestMove")

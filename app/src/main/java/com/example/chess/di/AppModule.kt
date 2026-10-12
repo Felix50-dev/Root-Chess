@@ -8,6 +8,7 @@ import androidx.datastore.preferences.preferencesDataStoreFile
 import androidx.room.Room
 import com.example.chess.data.StockfishEngine
 import com.example.chess.data.billing.EpochClock
+import com.example.chess.data.local.BotProgressDao
 import com.example.chess.data.local.PuzzleDao
 import com.example.chess.data.local.PuzzleDatabase
 import com.example.chess.data.model.Board
@@ -61,12 +62,22 @@ object AppModule {
     @Provides
     @Singleton
     fun providePuzzleDatabase(@ApplicationContext context: Context): PuzzleDatabase {
-        return Room.databaseBuilder(context, PuzzleDatabase::class.java, "puzzles.db").build()
+        // No Migration objects exist yet (single-entity schema until the bot_progress
+        // table was added for version 2) — destructive fallback is a deliberate,
+        // pre-release choice: it wipes any existing install's saved puzzles rather than
+        // crashing on launch. Revisit once this ships to real users.
+        return Room.databaseBuilder(context, PuzzleDatabase::class.java, "puzzles.db")
+            .fallbackToDestructiveMigration()
+            .build()
     }
 
     @Provides
     @Singleton
     fun providePuzzleDao(database: PuzzleDatabase): PuzzleDao = database.puzzleDao()
+
+    @Provides
+    @Singleton
+    fun provideBotProgressDao(database: PuzzleDatabase): BotProgressDao = database.botProgressDao()
 
     @Provides
     @Singleton

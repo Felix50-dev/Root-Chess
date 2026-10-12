@@ -21,6 +21,18 @@ import java.io.OutputStreamWriter
 
 private const val STOCKFISH_READ_TIMEOUT_MS = 5000L
 
+// UCI reports EITHER "score cp" OR "score mate" per info line, never both — a mate line
+// carries no centipawn figure at all. Synthesized in place of the missing cp value so
+// downstream loss/category/accuracy math (which reads only .score, never .mateIn) doesn't
+// silently operate on a stale cp value left over from an earlier, shallower line. Well
+// above BoardAnalysisScreen's ±800cp display clamp, so it always renders as maximally
+// decisive rather than as a literal (and misleading) four-figure pawn count.
+private const val MATE_SCORE_CP = 100_000
+
+// Shared by PV1 and PV2 mate parsing: "mate 0" (already checkmate) is always bad for the
+// side to move, same as any other non-positive mate value.
+private fun mateScoreFor(mateValue: Int): Int = if (mateValue > 0) MATE_SCORE_CP else -MATE_SCORE_CP
+
 class StockfishEngine {
     private var process: Process? = null
     private var outputStream: BufferedWriter? = null
@@ -93,7 +105,7 @@ class StockfishEngine {
 
         return PositionEval(
             state.score, state.bestMove, state.mateIn, state.pv, state.depth,
-            state.secondBestScore, state.secondBestMove,
+            state.secondBestScore, state.secondBestMove, state.secondBestMateIn,
         )
     }
 
@@ -156,7 +168,11 @@ class StockfishEngine {
                         state.score = it.groupValues[1].toInt()
                     }
                     Regex("score mate (-?\\d+)").find(line)?.let {
-                        state.mateIn = it.groupValues[1].toInt()
+                        val mateValue = it.groupValues[1].toInt()
+                        state.mateIn = mateValue
+                        // No "score cp" token exists on a mate line — synthesize one so
+                        // .score never carries a stale reading forward.
+                        state.score = mateScoreFor(mateValue)
                     }
                     Regex("pv (.+)$").find(line)?.let {
                         state.pv = parsePvTokens(it.groupValues[1])
@@ -165,6 +181,11 @@ class StockfishEngine {
                 2 -> {
                     Regex("score cp (-?\\d+)").find(line)?.let {
                         state.secondBestScore = it.groupValues[1].toInt()
+                    }
+                    Regex("score mate (-?\\d+)").find(line)?.let {
+                        val mateValue = it.groupValues[1].toInt()
+                        state.secondBestMateIn = mateValue
+                        state.secondBestScore = mateScoreFor(mateValue)
                     }
                     Regex("pv (.+)$").find(line)?.let {
                         state.secondBestMove = parsePvTokens(it.groupValues[1]).firstOrNull()
@@ -188,7 +209,7 @@ class StockfishEngine {
         }
         return PositionEval(
             state.score, state.bestMove, state.mateIn, state.pv, state.depth,
-            state.secondBestScore, state.secondBestMove,
+            state.secondBestScore, state.secondBestMove, state.secondBestMateIn,
         )
     }
 
