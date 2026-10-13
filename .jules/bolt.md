@@ -1,0 +1,3 @@
+## 2026-03-03 - Position Allocation & Range Check Optimizations
+**Learning:** `Position.fromAlgebraicNotation` relied on string allocation (`notation[1].toString()`) and integer parsing (`toInt()`), while `Board.isValidPosition` performed a 64-square iteration loop to check position boundaries. Since board positions are bounded to 8x8, `Position` can be cached in a 64-element flyweight pool (`Position.of(row, col)`), and boundary validation can be done in O(1).
+**Action:** Always leverage flyweight pooling for immutable board coordinates and direct char arithmetic (`notation[1] - '0'`) to eliminate GC allocations and string conversion overhead in hot move-generation paths.
