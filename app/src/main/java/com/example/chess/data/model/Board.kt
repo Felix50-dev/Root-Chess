@@ -26,25 +26,26 @@ class Board @Inject constructor() {
         enPassantTarget = null
         return List(8) { row ->
             List(8) { col ->
+                val pos = Position.of(row, col)
                 when (row) {
                     0 -> createPieceSpot(row, col, Color.BLACK) // Black pieces
-                    1 -> Spot(Position(row, col), Pawn(color = Color.BLACK, position =  Position(row, col), isKilled = false)) // Black pawns
-                    6 -> Spot(Position(row, col), Pawn(color = Color.WHITE, position = Position(row, col), isKilled = false)) // White pawns
+                    1 -> Spot(pos, Pawn(color = Color.BLACK, position = pos, isKilled = false)) // Black pawns
+                    6 -> Spot(pos, Pawn(color = Color.WHITE, position = pos, isKilled = false)) // White pawns
                     7 -> createPieceSpot(row, col, Color.WHITE) // White pieces
-                    else -> Spot(Position(row, col), null) // Empty spots
+                    else -> Spot(pos, null) // Empty spots
                 }
             }
         }
     }
 
     private fun createPieceSpot(row: Int, col: Int, color: Color): Spot {
-        val position = Position(row, col)
+        val position = Position.of(row, col)
         val piece = when (col) {
             0, 7 -> Rook(color = color, position = position, isKilled = false)
             1, 6 -> Knight(color = color, position = position, isKilled = false)
             2, 5 -> Bishop(color = color, position = position, isKilled = false)
-            3 -> if (color == Color.BLACK) Queen(color = color, position = position, isKilled = false) else Queen(color = color, position = position, isKilled = false)
-            4 -> if (color == Color.BLACK) King(color = color, position = position, isKilled = false) else King(color = color, position =  position, isKilled = false)
+            3 -> Queen(color = color, position = position, isKilled = false)
+            4 -> King(color = color, position = position, isKilled = false)
             else -> null
         }
         return Spot(position, piece)
@@ -90,14 +91,8 @@ class Board @Inject constructor() {
 
 
     fun isValidPosition(position: Position): Boolean {
-        var isPositionValid = false
-        for (row in 0 until NUM_ROWS) {
-            for (column in 0 until NUM_COLUMNS) {
-                if (boxes[row][column].position == position
-                ) isPositionValid = true
-            }
-        }
-        return isPositionValid
+        // Direct O(1) range check replaces scanning all 64 board squares
+        return position.row in 0 until NUM_ROWS && position.column in 0 until NUM_COLUMNS
     }
 
 
@@ -106,4 +101,3 @@ class Board @Inject constructor() {
         const val NUM_COLUMNS: Int = 8
     }
 }
-

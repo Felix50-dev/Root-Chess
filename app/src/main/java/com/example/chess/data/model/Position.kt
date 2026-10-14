@@ -15,11 +15,29 @@ data class Position(
     }
 
     companion object {
+        // Flyweight pool caching all 64 valid Position instances on an 8x8 board
+        private val POOL = Array(64) { index ->
+            Position(index / 8, index % 8)
+        }
+
+        /**
+         * Returns a flyweight cached [Position] instance for standard board coordinates (0..7, 0..7),
+         * eliminating redundant heap allocations during move generation and board operations.
+         */
+        fun of(row: Int, column: Int): Position {
+            return if (row in 0..7 && column in 0..7) {
+                POOL[row * 8 + column]
+            } else {
+                Position(row, column)
+            }
+        }
+
         // Convert algebraic notation (e.g., e2) to Position
         fun fromAlgebraicNotation(notation: String): Position {
             val column = notation[0] - 'a'  // 'a' is column 0, 'b' is 1, and so on
-            val row = 8 - (notation[1].toString().toInt())  // '8' corresponds to row 0
-            return Position(row, column)
+            // Char arithmetic avoids String allocation (notation[1].toString()) and integer parsing
+            val row = 8 - (notation[1] - '0')
+            return of(row, column)
         }
     }
 }
