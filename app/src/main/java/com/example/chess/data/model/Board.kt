@@ -1,7 +1,10 @@
 package com.example.chess.data.model
 
 import javax.inject.Inject
-class Board @Inject constructor() {
+class Board(boxes: List<List<Spot>>? = null) {
+    @Inject
+    constructor() : this(null)
+
     var boxes: List<List<Spot>>
 
     // The square a pawn can be captured on via en passant right now (i.e. the square
@@ -11,7 +14,9 @@ class Board @Inject constructor() {
     var enPassantTarget: Position? = null
 
     init {
-        boxes = resetBoard()
+        // Performance optimization: bypasses redundant resetBoard() allocations when
+        // initial boxes are provided directly (e.g., during cloning or FEN loading).
+        this.boxes = boxes ?: resetBoard()
     }
 
     fun getBox(row: Int, col: Int): Spot {
@@ -52,8 +57,6 @@ class Board @Inject constructor() {
 
 
     fun clone(): Board {
-        val clonedBoard = Board()
-
         // Create a deep copy of the `boxes` property
         val clonedBoxes = boxes.map { row ->
             row.map { spot ->
@@ -62,9 +65,9 @@ class Board @Inject constructor() {
                 // need real copies to keep the clone isolated from the live board.
                 val clonedPosition = spot.position
                 val clonedPiece = spot.chessPiece?.let { piece ->
-                    // hasMoved must carry over — omitting it (as before) makes a clone
-                    // think every piece is still on its starting square for castling
-                    // purposes, regardless of what's actually happened in the real game.
+                    // hasMoved must carry over — omitting it makes a clone think
+                    // every piece is still on its starting square for castling purposes,
+                    // regardless of what's actually happened in the real game.
                     //
                     // id must carry over too — it defaults to a fresh random UUID, and
                     // callers that diff pieces across two separate clones by id (e.g.
@@ -83,7 +86,7 @@ class Board @Inject constructor() {
                 Spot(clonedPosition, clonedPiece)
             }
         }
-        clonedBoard.boxes = clonedBoxes
+        val clonedBoard = Board(clonedBoxes)
         clonedBoard.enPassantTarget = enPassantTarget
         return clonedBoard
     }
