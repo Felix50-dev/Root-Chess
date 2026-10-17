@@ -10,6 +10,7 @@ import com.example.chess.data.model.Pawn
 import com.example.chess.data.model.Position
 import com.example.chess.data.model.Queen
 import com.example.chess.data.model.Rook
+import com.example.chess.data.model.Spot
 
 // Converts between this app's Board and standard FEN strings, so a position can be
 // persisted (e.g. a puzzle extracted from a past game) and later reconstructed exactly.
@@ -19,11 +20,13 @@ import com.example.chess.data.model.Rook
 object FenConverter {
 
     fun toFen(board: Board, activeColor: Color): String {
+        val boxes = board.boxes
         val placement = (0 until Board.NUM_ROWS).joinToString("/") { row ->
             val rank = StringBuilder()
             var emptyRun = 0
+            val rowList = boxes[row]
             for (col in 0 until Board.NUM_COLUMNS) {
-                val piece = board.getBox(row, col).chessPiece
+                val piece = rowList[col].chessPiece
                 if (piece == null) {
                     emptyRun++
                 } else {
@@ -67,10 +70,11 @@ object FenConverter {
         val castling = fields.getOrElse(2) { "-" }
         val enPassant = fields.getOrElse(3) { "-" }
 
-        val board = Board()
-        for (row in 0 until Board.NUM_ROWS) {
-            for (col in 0 until Board.NUM_COLUMNS) {
-                board.getBox(row, col).chessPiece = null
+        // Performance optimization: construct empty 8x8 grid directly and pass to Board,
+        // avoiding allocating standard starting pieces only to immediately discard/clear them.
+        val grid: List<List<Spot>> = List(Board.NUM_ROWS) { row ->
+            List(Board.NUM_COLUMNS) { col ->
+                Spot(Position(row, col), null)
             }
         }
 
@@ -81,11 +85,14 @@ object FenConverter {
                 if (ch.isDigit()) {
                     col += ch.digitToInt()
                 } else {
-                    board.getBox(row, col).chessPiece = charToPiece(ch, Position(row, col))
+                    val spot = grid[row][col]
+                    spot.chessPiece = charToPiece(ch, spot.position)
                     col++
                 }
             }
         }
+
+        val board = Board(grid)
 
         findKing(board, Color.WHITE)?.hasMoved = !(castling.contains('K') || castling.contains('Q'))
         findKing(board, Color.BLACK)?.hasMoved = !(castling.contains('k') || castling.contains('q'))
@@ -126,9 +133,11 @@ object FenConverter {
     }
 
     private fun findKing(board: Board, color: Color): King? {
+        val boxes = board.boxes
         for (row in 0 until Board.NUM_ROWS) {
+            val rowList = boxes[row]
             for (col in 0 until Board.NUM_COLUMNS) {
-                val piece = board.getBox(row, col).chessPiece
+                val piece = rowList[col].chessPiece
                 if (piece is King && piece.color == color) return piece
             }
         }
@@ -136,12 +145,12 @@ object FenConverter {
     }
 
     private fun isUnmovedRook(board: Board, row: Int, col: Int, color: Color): Boolean {
-        val piece = board.getBox(row, col).chessPiece
+        val piece = board.boxes[row][col].chessPiece
         return piece is Rook && piece.color == color && !piece.hasMoved
     }
 
     private fun setRookHasMoved(board: Board, row: Int, col: Int, hasMoved: Boolean) {
-        val piece = board.getBox(row, col).chessPiece
+        val piece = board.boxes[row][col].chessPiece
         if (piece is Rook) piece.hasMoved = hasMoved
     }
 }
