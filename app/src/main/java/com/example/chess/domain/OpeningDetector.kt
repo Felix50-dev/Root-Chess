@@ -9,13 +9,33 @@ import com.example.chess.domain.model.OpeningMatch
 object OpeningDetector {
 
     fun detect(playedMoves: List<String>, book: List<Opening>): OpeningMatch? {
-        val best = book
-            .asSequence()
-            .filter { it.moves.size <= playedMoves.size }
-            .filter { it.moves == playedMoves.subList(0, it.moves.size) }
-            .maxByOrNull { it.moves.size }
-            ?: return null
+        val playedSize = playedMoves.size
+        if (playedSize == 0) return null
 
-        return OpeningMatch(opening = best, matchedPlyCount = best.moves.size)
+        var bestOpening: Opening? = null
+        var maxMatchedSize = -1
+
+        // Direct indexed iteration avoids Sequence pipeline allocations, intermediate subList() heap
+        // creations, and redundant comparisons for shorter lines once a longer match is found.
+        for (i in book.indices) {
+            val opening = book[i]
+            val moves = opening.moves
+            val size = moves.size
+            if (size in (maxMatchedSize + 1)..playedSize) {
+                var matches = true
+                for (j in 0 until size) {
+                    if (moves[j] != playedMoves[j]) {
+                        matches = false
+                        break
+                    }
+                }
+                if (matches) {
+                    bestOpening = opening
+                    maxMatchedSize = size
+                }
+            }
+        }
+
+        return bestOpening?.let { OpeningMatch(opening = it, matchedPlyCount = maxMatchedSize) }
     }
 }
