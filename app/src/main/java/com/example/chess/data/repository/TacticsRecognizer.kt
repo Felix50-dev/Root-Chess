@@ -389,18 +389,29 @@ class TacticsRecognizer @Inject constructor(
         val opponentColor = if (piece.color == Color.WHITE) Color.BLACK else Color.WHITE
         val targetSquare = board.getBox(position.row, position.column)
 
-        var cheapestAttacker: Int? = null
-        for (row in 0..7) {
-            for (col in 0..7) {
-                val attacker = board.getBox(row, col).chessPiece ?: continue
-                if (attacker.color != opponentColor) continue
-                if (attacker.canMove(board, board.getBox(row, col), targetSquare)) {
-                    cheapestAttacker = minOf(cheapestAttacker ?: Int.MAX_VALUE, attacker.value)
+        var cheapestAttacker = Int.MAX_VALUE
+        val boxes = board.boxes
+        for (r in 0..7) {
+            val rowSpots = boxes[r]
+            for (c in 0..7) {
+                val attackerSpot = rowSpots[c]
+                val attacker = attackerSpot.chessPiece ?: continue
+                if (attacker.color == opponentColor && attacker.value < cheapestAttacker) {
+                    if (attacker.canMove(board, attackerSpot, targetSquare)) {
+                        cheapestAttacker = attacker.value
+                    }
                 }
             }
         }
-        val attackerValue = cheapestAttacker ?: return false  // not attacked at all
 
+        if (cheapestAttacker == Int.MAX_VALUE) return false  // not attacked at all
+
+        // Bolt Optimization: If the cheapest attacker's value is strictly less than the piece's value
+        // (e.g. Pawn attacking a Queen), capturing is always net-profitable for the opponent regardless
+        // of whether the piece is defended. Returning early avoids cloning the board and doing a second 64-square scan.
+        if (cheapestAttacker < piece.value) return true
+
+        // Otherwise (cheapestAttacker >= piece.value), the attack is only profitable if the piece is undefended.
         // canMove() refuses to "capture" a square occupied by a friendly piece, so
         // checking defenders directly against `board` would always find none (every
         // defender would see its own side's piece still sitting there). Simulate an
@@ -408,22 +419,25 @@ class TacticsRecognizer @Inject constructor(
         // answer the real geometric question — including for pawns, whose diagonal
         // capture move specifically requires an enemy piece present on the target.
         val afterCapture = board.clone()
-        afterCapture.getBox(position.row, position.column).chessPiece =
-            Pawn(color = opponentColor, position = position, isKilled = false)
+        val targetRow = position.row
+        val targetCol = position.column
+        val afterCaptureTargetSquare = afterCapture.getBox(targetRow, targetCol)
+        afterCaptureTargetSquare.chessPiece = Pawn(color = opponentColor, position = position, isKilled = false)
 
-        val isDefended = (0..7).any { row ->
-            (0..7).any { col ->
-                val defender = afterCapture.getBox(row, col).chessPiece
-                defender != null && defender.color == piece.color &&
-                    defender.canMove(
-                        afterCapture,
-                        afterCapture.getBox(row, col),
-                        afterCapture.getBox(position.row, position.column)
-                    )
+        // Bolt Optimization: Direct box scanning and early return on the first valid defender found.
+        val afterBoxes = afterCapture.boxes
+        for (r in 0..7) {
+            val rowSpots = afterBoxes[r]
+            for (c in 0..7) {
+                val defenderSpot = rowSpots[c]
+                val defender = defenderSpot.chessPiece ?: continue
+                if (defender.color == piece.color && defender.canMove(afterCapture, defenderSpot, afterCaptureTargetSquare)) {
+                    return false // Defended and cheapestAttacker >= piece.value -> not hanging for free
+                }
             }
         }
 
-        return !isDefended || attackerValue < piece.value
+        return true // Undefended and attacked by equal/greater piece -> hanging for free
     }
 
     fun isDoubleCheck(board: Board, move: Move, player: Player): DetectedTactic? {
