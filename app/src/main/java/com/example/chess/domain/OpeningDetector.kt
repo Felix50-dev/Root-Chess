@@ -9,13 +9,36 @@ import com.example.chess.domain.model.OpeningMatch
 object OpeningDetector {
 
     fun detect(playedMoves: List<String>, book: List<Opening>): OpeningMatch? {
-        val best = book
-            .asSequence()
-            .filter { it.moves.size <= playedMoves.size }
-            .filter { it.moves == playedMoves.subList(0, it.moves.size) }
-            .maxByOrNull { it.moves.size }
-            ?: return null
+        var bestOpening: Opening? = null
+        var maxMatchedSize = -1
 
-        return OpeningMatch(opening = best, matchedPlyCount = best.moves.size)
+        // Optimization: Iterating directly over `book` without sequence wrappers
+        // or creating `subList()` view objects/copies for each opening candidate.
+        // Element-by-element comparison stops early on mismatches to avoid allocation
+        // and reduce CPU cycles when matching played moves against opening book entries.
+        for (i in 0 until book.size) {
+            val opening = book[i]
+            val movesSize = opening.moves.size
+
+            if (movesSize > playedMoves.size || movesSize <= maxMatchedSize) {
+                continue
+            }
+
+            var matches = true
+            for (j in 0 until movesSize) {
+                if (opening.moves[j] != playedMoves[j]) {
+                    matches = false
+                    break
+                }
+            }
+
+            if (matches) {
+                bestOpening = opening
+                maxMatchedSize = movesSize
+            }
+        }
+
+        val best = bestOpening ?: return null
+        return OpeningMatch(opening = best, matchedPlyCount = maxMatchedSize)
     }
 }
