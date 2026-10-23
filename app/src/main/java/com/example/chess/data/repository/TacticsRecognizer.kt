@@ -389,17 +389,26 @@ class TacticsRecognizer @Inject constructor(
         val opponentColor = if (piece.color == Color.WHITE) Color.BLACK else Color.WHITE
         val targetSquare = board.getBox(position.row, position.column)
 
-        var cheapestAttacker: Int? = null
+        var cheapestAttacker = Int.MAX_VALUE
         for (row in 0..7) {
             for (col in 0..7) {
                 val attacker = board.getBox(row, col).chessPiece ?: continue
                 if (attacker.color != opponentColor) continue
-                if (attacker.canMove(board, board.getBox(row, col), targetSquare)) {
-                    cheapestAttacker = minOf(cheapestAttacker ?: Int.MAX_VALUE, attacker.value)
+                // Bolt Optimization: Only evaluate expensive `canMove` checks if the attacker
+                // is cheaper than the current cheapest attacker found so far.
+                if (attacker.value < cheapestAttacker) {
+                    if (attacker.canMove(board, board.getBox(row, col), targetSquare)) {
+                        cheapestAttacker = attacker.value
+                    }
                 }
             }
         }
-        val attackerValue = cheapestAttacker ?: return false  // not attacked at all
+        if (cheapestAttacker == Int.MAX_VALUE) return false  // not attacked at all
+
+        // Bolt Optimization: If the cheapest attacker is worth strictly less than the piece,
+        // capturing is net-profitable regardless of defenders. Returning early bypasses
+        // board cloning (board.clone()) and the 64-square defender loop entirely.
+        if (cheapestAttacker < piece.value) return true
 
         // canMove() refuses to "capture" a square occupied by a friendly piece, so
         // checking defenders directly against `board` would always find none (every
@@ -423,7 +432,7 @@ class TacticsRecognizer @Inject constructor(
             }
         }
 
-        return !isDefended || attackerValue < piece.value
+        return !isDefended
     }
 
     fun isDoubleCheck(board: Board, move: Move, player: Player): DetectedTactic? {
