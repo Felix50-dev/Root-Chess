@@ -72,9 +72,10 @@ object ExplanationFacts {
         var whitePoints = 0
         var blackPoints = 0
 
-        for (row in 0 until Board.NUM_ROWS) {
-            for (col in 0 until Board.NUM_COLUMNS) {
-                val spot = board.getBox(row, col)
+        // Performance Optimization: Iterate directly over board.boxes (List<List<Spot>>) to eliminate
+        // redundant board.getBox(row, col) calls, row/col boundary checks, and indexing overhead.
+        for (row in board.boxes) {
+            for (spot in row) {
                 val piece = spot.chessPiece ?: continue
                 val square = spot.position.toAlgebraicNotation()
                 if (piece.color == Color.WHITE) whitePoints += piece.pointValue() else blackPoints += piece.pointValue()
@@ -112,9 +113,10 @@ object ExplanationFacts {
     // exactly-two-rooks case is described; 0/1/3+ rooks emit nothing.
     internal fun describeRookConnection(board: Board, color: Color): String? {
         val rooks = mutableListOf<ChessPiece>()
-        for (row in 0 until Board.NUM_ROWS) {
-            for (col in 0 until Board.NUM_COLUMNS) {
-                val piece = board.getBox(row, col).chessPiece ?: continue
+        // Performance Optimization: Iterate directly over board.boxes to avoid getBox overhead.
+        for (row in board.boxes) {
+            for (spot in row) {
+                val piece = spot.chessPiece ?: continue
                 if (piece is Rook && piece.color == color) rooks += piece
             }
         }
