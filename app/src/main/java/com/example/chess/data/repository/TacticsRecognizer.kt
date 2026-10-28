@@ -394,12 +394,20 @@ class TacticsRecognizer @Inject constructor(
             for (col in 0..7) {
                 val attacker = board.getBox(row, col).chessPiece ?: continue
                 if (attacker.color != opponentColor) continue
+                // Optimization: prune canMove check if attacker's value cannot lower cheapestAttacker
+                val currentCheapest = cheapestAttacker ?: Int.MAX_VALUE
+                if (attacker.value >= currentCheapest) continue
+
                 if (attacker.canMove(board, board.getBox(row, col), targetSquare)) {
-                    cheapestAttacker = minOf(cheapestAttacker ?: Int.MAX_VALUE, attacker.value)
+                    cheapestAttacker = attacker.value
                 }
             }
         }
         val attackerValue = cheapestAttacker ?: return false  // not attacked at all
+
+        // Optimization: if cheapest attacker value is strictly less than piece value,
+        // capturing is guaranteed net-profitable regardless of defenders. Skip board cloning and defender search.
+        if (attackerValue < piece.value) return true
 
         // canMove() refuses to "capture" a square occupied by a friendly piece, so
         // checking defenders directly against `board` would always find none (every
@@ -411,19 +419,21 @@ class TacticsRecognizer @Inject constructor(
         afterCapture.getBox(position.row, position.column).chessPiece =
             Pawn(color = opponentColor, position = position, isKilled = false)
 
+        val targetSpotInAfterCapture = afterCapture.getBox(position.row, position.column)
         val isDefended = (0..7).any { row ->
             (0..7).any { col ->
-                val defender = afterCapture.getBox(row, col).chessPiece
+                val defenderSpot = afterCapture.getBox(row, col)
+                val defender = defenderSpot.chessPiece
                 defender != null && defender.color == piece.color &&
                     defender.canMove(
                         afterCapture,
-                        afterCapture.getBox(row, col),
-                        afterCapture.getBox(position.row, position.column)
+                        defenderSpot,
+                        targetSpotInAfterCapture
                     )
             }
         }
 
-        return !isDefended || attackerValue < piece.value
+        return !isDefended
     }
 
     fun isDoubleCheck(board: Board, move: Move, player: Player): DetectedTactic? {
