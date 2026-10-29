@@ -139,6 +139,9 @@ android {
         // Required by Robolectric/Roborazzi so screenshot tests can resolve app resources
         // (themes, drawables) when rendering composables on the host JVM.
         unitTests.isIncludeAndroidResources = true
+        unitTests.all {
+            it.jvmArgs("-Dnet.bytebuddy.experimental=true")
+        }
     }
 
     sourceSets {
