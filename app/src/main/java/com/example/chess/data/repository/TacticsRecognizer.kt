@@ -389,17 +389,29 @@ class TacticsRecognizer @Inject constructor(
         val opponentColor = if (piece.color == Color.WHITE) Color.BLACK else Color.WHITE
         val targetSquare = board.getBox(position.row, position.column)
 
-        var cheapestAttacker: Int? = null
+        var cheapestAttacker = Int.MAX_VALUE
         for (row in 0..7) {
             for (col in 0..7) {
                 val attacker = board.getBox(row, col).chessPiece ?: continue
                 if (attacker.color != opponentColor) continue
-                if (attacker.canMove(board, board.getBox(row, col), targetSquare)) {
-                    cheapestAttacker = minOf(cheapestAttacker ?: Int.MAX_VALUE, attacker.value)
+                // Bolt optimization: test value before checking canMove path clearance.
+                // If the attacker is not strictly cheaper than the cheapest valid attacker
+                // found so far, checking canMove is redundant as it cannot lower cheapestAttacker.
+                if (attacker.value < cheapestAttacker) {
+                    if (attacker.canMove(board, board.getBox(row, col), targetSquare)) {
+                        cheapestAttacker = attacker.value
+                    }
                 }
             }
         }
-        val attackerValue = cheapestAttacker ?: return false  // not attacked at all
+        if (cheapestAttacker == Int.MAX_VALUE) return false  // not attacked at all
+        val attackerValue = cheapestAttacker
+
+        // Bolt optimization: if the cheapest attacker is strictly less valuable than the
+        // target piece (e.g. Pawn attacking Knight/Bishop/Rook/Queen, or Knight attacking
+        // Rook/Queen), capturing is net-profitable even if defended. Return early to bypass
+        // expensive board cloning and secondary defender loops.
+        if (attackerValue < piece.value) return true
 
         // canMove() refuses to "capture" a square occupied by a friendly piece, so
         // checking defenders directly against `board` would always find none (every
@@ -423,7 +435,7 @@ class TacticsRecognizer @Inject constructor(
             }
         }
 
-        return !isDefended || attackerValue < piece.value
+        return !isDefended
     }
 
     fun isDoubleCheck(board: Board, move: Move, player: Player): DetectedTactic? {
