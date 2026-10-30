@@ -1,0 +1,3 @@
+## 2025-05-20 - Early Pruning in TacticsRecognizer Hanging-Piece Checks
+**Learning:** In `TacticsRecognizer.isPieceHangingForFree`, testing `attacker.value < cheapestAttacker` before invoking `canMove` prunes redundant move validations, and returning early when `cheapestAttacker < piece.value` bypasses expensive board cloning (`board.clone()`) and secondary defender loops when capturing is guaranteed net-profitable.
+**Action:** When scanning board positions for minimum/maximum values, prune evaluation routines (like path clearance or ray walks) using current extreme values before executing expensive board operations or deep clones.
