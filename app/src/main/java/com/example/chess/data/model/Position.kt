@@ -16,9 +16,10 @@ data class Position(
 
     companion object {
         // Convert algebraic notation (e.g., e2) to Position
+        // Uses char arithmetic ('0') to avoid intermediate String allocation and integer parsing overhead.
         fun fromAlgebraicNotation(notation: String): Position {
             val column = notation[0] - 'a'  // 'a' is column 0, 'b' is 1, and so on
-            val row = 8 - (notation[1].toString().toInt())  // '8' corresponds to row 0
+            val row = 8 - (notation[1] - '0')  // '8' corresponds to row 0
             return Position(row, column)
         }
     }
