@@ -8,14 +8,38 @@ import com.example.chess.domain.model.OpeningMatch
 // dependency, so it's testable with a plain in-memory book fixture.
 object OpeningDetector {
 
+    // ⚡ Bolt: Optimized to avoid Kotlin Sequence pipeline overhead and subList heap allocations.
+    // Iterates with an indexed for loop and checks opening length against bestLength so far,
+    // pruning candidates that cannot produce a strictly longer match.
     fun detect(playedMoves: List<String>, book: List<Opening>): OpeningMatch? {
-        val best = book
-            .asSequence()
-            .filter { it.moves.size <= playedMoves.size }
-            .filter { it.moves == playedMoves.subList(0, it.moves.size) }
-            .maxByOrNull { it.moves.size }
-            ?: return null
+        if (playedMoves.isEmpty() || book.isEmpty()) return null
 
-        return OpeningMatch(opening = best, matchedPlyCount = best.moves.size)
+        var bestOpening: Opening? = null
+        var bestLength = 0
+        val playedSize = playedMoves.size
+
+        for (i in book.indices) {
+            val opening = book[i]
+            val moves = opening.moves
+            val size = moves.size
+
+            // Only evaluate openings that can fit within played moves and are longer than the best found
+            if (size in (bestLength + 1)..playedSize) {
+                if (matchesPrefix(moves, playedMoves)) {
+                    bestOpening = opening
+                    bestLength = size
+                }
+            }
+        }
+
+        val best = bestOpening ?: return null
+        return OpeningMatch(opening = best, matchedPlyCount = bestLength)
+    }
+
+    private fun matchesPrefix(openingMoves: List<String>, playedMoves: List<String>): Boolean {
+        for (i in openingMoves.indices) {
+            if (openingMoves[i] != playedMoves[i]) return false
+        }
+        return true
     }
 }
