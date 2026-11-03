@@ -52,4 +52,40 @@ class OpeningDetectorTest {
 
         assertNull(match)
     }
+
+    @Test
+    fun `returns null for an empty book`() {
+        val played = listOf("e2e4", "e7e5")
+        val match = OpeningDetector.detect(played, emptyList())
+
+        assertNull(match)
+    }
+
+    @Test
+    fun `correctly chooses longest match regardless of book order`() {
+        // Shorter line appears after longer line in the book
+        val reversedBook = listOf(
+            Opening(
+                eco = "C68", name = "Ruy Lopez: Exchange Variation",
+                moves = listOf("e2e4", "e7e5", "g1f3", "b8c6", "f1b5", "a7a6", "b5c6")
+            ),
+            Opening(eco = "C60", name = "Ruy Lopez", moves = listOf("e2e4", "e7e5", "g1f3", "b8c6", "f1b5")),
+        )
+        val played = listOf("e2e4", "e7e5", "g1f3", "b8c6", "f1b5", "a7a6", "b5c6", "d7c6")
+
+        val match = OpeningDetector.detect(played, reversedBook)
+
+        assertEquals("Ruy Lopez: Exchange Variation", match?.opening?.name)
+        assertEquals(7, match?.matchedPlyCount)
+    }
+
+    @Test
+    fun `partial prefix deviation does not match`() {
+        // Diverges on move 4
+        val played = listOf("e2e4", "e7e5", "g1f3", "d7d6")
+
+        val match = OpeningDetector.detect(played, book)
+
+        assertNull(match)
+    }
 }
