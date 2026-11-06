@@ -1,8 +1,13 @@
 package com.example.chess.data.model
 
 import javax.inject.Inject
-class Board @Inject constructor() {
-    var boxes: List<List<Spot>>
+class Board(initialBoxes: List<List<Spot>>? = null) {
+    // Zero-argument constructor for Dagger/Hilt injection; defaults to standard starting board.
+    @Inject constructor() : this(null)
+
+    // Optimization: When cloning or supplying custom spots, avoid running resetBoard()
+    // which would allocate 64 Spots and starting pieces only to discard them immediately.
+    var boxes: List<List<Spot>> = initialBoxes ?: resetBoard()
 
     // The square a pawn can be captured on via en passant right now (i.e. the square
     // "behind" a pawn that just made a two-square move), or null if none is available.
@@ -11,7 +16,9 @@ class Board @Inject constructor() {
     var enPassantTarget: Position? = null
 
     init {
-        boxes = resetBoard()
+        if (initialBoxes == null) {
+            enPassantTarget = null
+        }
     }
 
     fun getBox(row: Int, col: Int): Spot {
@@ -52,8 +59,6 @@ class Board @Inject constructor() {
 
 
     fun clone(): Board {
-        val clonedBoard = Board()
-
         // Create a deep copy of the `boxes` property
         val clonedBoxes = boxes.map { row ->
             row.map { spot ->
@@ -83,21 +88,17 @@ class Board @Inject constructor() {
                 Spot(clonedPosition, clonedPiece)
             }
         }
-        clonedBoard.boxes = clonedBoxes
+        // Optimization: Pass clonedBoxes directly to the constructor so Board doesn't
+        // invoke resetBoard() redundantly during clone instantiation.
+        val clonedBoard = Board(clonedBoxes)
         clonedBoard.enPassantTarget = enPassantTarget
         return clonedBoard
     }
 
 
     fun isValidPosition(position: Position): Boolean {
-        var isPositionValid = false
-        for (row in 0 until NUM_ROWS) {
-            for (column in 0 until NUM_COLUMNS) {
-                if (boxes[row][column].position == position
-                ) isPositionValid = true
-            }
-        }
-        return isPositionValid
+        // Optimization: Direct O(1) boundary check instead of O(N^2) 64-square loop
+        return position.row in 0 until NUM_ROWS && position.column in 0 until NUM_COLUMNS
     }
 
 

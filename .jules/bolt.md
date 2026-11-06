@@ -1,0 +1,3 @@
+## 2026-10-14 - Bypass Redundant Board Initialization on Clone
+**Learning:** Instantiating `Board()` previously executed `resetBoard()` in the `init` block unconditionally, allocating 64 `Spot` instances and starting `ChessPiece` objects even when `Board.clone()` immediately overwrote `clonedBoard.boxes`. In Kotlin, property initializers and `init` blocks run before secondary constructor bodies; passing `initialBoxes` via the primary constructor allows bypassing `resetBoard()` completely during cloning.
+**Action:** Always accept optional initialization state via the primary constructor while keeping a zero-arg `@Inject constructor() : this(null)` for Hilt to prevent unnecessary default heap allocations.
