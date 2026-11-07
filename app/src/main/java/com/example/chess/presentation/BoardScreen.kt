@@ -530,19 +530,19 @@ fun ChessGrid(
     visualPieces: ImmutableList<VisualPiece>
 ) {
 
-    val blackPiecesKilled = remember (piecesKilled) {
+    val blackPiecesKilled = remember(piecesKilled) {
         piecesKilled.filter {
             it.color == com.example.chess.data.model.Color.BLACK
         }
     }
-    val whitePiecesKilled = remember {
+    val whitePiecesKilled = remember(piecesKilled) {
         piecesKilled.filter {
             it.color == com.example.chess.data.model.Color.WHITE
         }
     }
 
-    // Black's material advantage
-    val whiteAdvantage = calculateMaterialAdvantage(piecesKilled)
+    // White's material advantage is memoized across recompositions
+    val whiteAdvantage = remember(piecesKilled) { calculateMaterialAdvantage(piecesKilled) }
     val blackAdvantage = -whiteAdvantage // Black’s perspective
 
     if (showPromotionDialog) {
@@ -1068,20 +1068,22 @@ fun Panel(
     }
 }
 
+// Fast material advantage calculation without map or intermediate list allocations.
+// Inlined piece value matching avoids allocating a 12-entry Map on every call, and
+// direct indexing loop avoids the intermediate list from filterNotNull().
 fun calculateMaterialAdvantage(lostPieces: List<ChessPiece?>): Int {
-    val pieceValues = mapOf(
-        R.drawable.pawn_white to 1, R.drawable.pawn_dark to 1,
-        R.drawable.knight_white to 3, R.drawable.knight_dark to 3,
-        R.drawable.bishop_white to 3, R.drawable.bishop_dark to 3,
-        R.drawable.rook_white to 5, R.drawable.rook_dark to 5,
-        R.drawable.queen_white to 9, R.drawable.queen_dark to 9,
-        R.drawable.king_white to 0, R.drawable.king_dark to 0 // Kings don’t count
-    )
-
     var whiteAdvantage = 0 // Positive means White is ahead, negative means Black is ahead
 
-    lostPieces.filterNotNull().forEach { piece ->
-        val value = pieceValues[piece.vectorAsset] ?: 0
+    for (i in lostPieces.indices) {
+        val piece = lostPieces[i] ?: continue
+        val value = when (piece) {
+            is com.example.chess.data.model.Pawn -> 1
+            is com.example.chess.data.model.Knight -> 3
+            is com.example.chess.data.model.Bishop -> 3
+            is com.example.chess.data.model.Rook -> 5
+            is com.example.chess.data.model.Queen -> 9
+            is com.example.chess.data.model.King -> 0 // Kings don't count towards material advantage
+        }
         when (piece.color) {
             com.example.chess.data.model.Color.WHITE -> whiteAdvantage -= value // White loses material
             com.example.chess.data.model.Color.BLACK -> whiteAdvantage += value // Black loses material
