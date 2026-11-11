@@ -1,7 +1,12 @@
 package com.example.chess.data.model
 
 import javax.inject.Inject
-class Board @Inject constructor() {
+class Board(
+    initialBoxes: List<List<Spot>>? = null
+) {
+    @Inject
+    constructor() : this(null)
+
     var boxes: List<List<Spot>>
 
     // The square a pawn can be captured on via en passant right now (i.e. the square
@@ -11,7 +16,9 @@ class Board @Inject constructor() {
     var enPassantTarget: Position? = null
 
     init {
-        boxes = resetBoard()
+        // Optimization: When initialBoxes is provided (e.g. during clone()), bypass
+        // resetBoard() to avoid allocating 32 initial pieces, 64 spots, and matrix lists (~105 heap objects).
+        boxes = initialBoxes ?: resetBoard()
     }
 
     fun getBox(row: Int, col: Int): Spot {
@@ -52,8 +59,6 @@ class Board @Inject constructor() {
 
 
     fun clone(): Board {
-        val clonedBoard = Board()
-
         // Create a deep copy of the `boxes` property
         val clonedBoxes = boxes.map { row ->
             row.map { spot ->
@@ -83,7 +88,9 @@ class Board @Inject constructor() {
                 Spot(clonedPosition, clonedPiece)
             }
         }
-        clonedBoard.boxes = clonedBoxes
+        // Optimization: Pass clonedBoxes directly to the Board constructor so that Board(clonedBoxes)
+        // does not execute resetBoard(), eliminating ~105 redundant heap allocations per clone call.
+        val clonedBoard = Board(clonedBoxes)
         clonedBoard.enPassantTarget = enPassantTarget
         return clonedBoard
     }
